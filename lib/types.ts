@@ -2,6 +2,9 @@ export type CaseStatus =
   | "missing"
   | "possibly_found"
   | "verifying_location"
+  | "located"
+  | "safe"
+  | "hospitalized"
   | "found_alive"
   | "reunified"
   | "duplicate"
@@ -11,6 +14,9 @@ export const statusLabels: Record<CaseStatus, string> = {
   missing: "Aún sin contacto",
   possibly_found: "Posiblemente localizado/a",
   verifying_location: "Localización en verificación",
+  located: "Localizada",
+  safe: "A salvo",
+  hospitalized: "Hospitalizada",
   found_alive: "Localizado/a con vida",
   reunified: "Reunificado/a con familia",
   duplicate: "Duplicado",
@@ -23,6 +29,8 @@ export type PersonCase = {
   full_name: string;
   approximate_age: number | null;
   photo_url: string | null;
+  document_id?: string | null;
+  document_last4?: string | null;
   status: CaseStatus;
   last_seen_location: string;
   last_seen_at: string | null;

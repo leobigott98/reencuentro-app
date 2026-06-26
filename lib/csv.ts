@@ -1,6 +1,7 @@
 export type FoundPersonRow = {
   full_name: string;
   approximate_age?: number | null;
+  document_id?: string | null;
   current_location: string;
   notes?: string | null;
 };
@@ -50,6 +51,7 @@ export function parseFoundCsv(text: string): FoundPersonRow[] {
     return {
       full_name: get("full_name", "nombre", "nombre completo", "name"),
       approximate_age: Number.isFinite(age) ? age : null,
+      document_id: get("document_id", "cedula", "cédula", "ci", "id") || null,
       current_location: get("current_location", "ubicacion", "ubicación", "lugar", "location"),
       notes: get("notes", "notas", "observaciones", "descripcion", "descripción") || null
     };

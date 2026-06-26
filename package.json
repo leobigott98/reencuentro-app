@@ -16,7 +16,8 @@
     "react": "latest",
     "react-dom": "latest",
     "resend": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "latest",

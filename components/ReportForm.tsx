@@ -1,14 +1,27 @@
 "use client";
+
 import { useActionState } from "react";
 import { createMissingReport } from "@/app/actions";
 import { SubmitButton } from "./SubmitButton";
 
-const initial = { ok: false, message: "" } as { ok: boolean; message: string };
+type ReportState = {
+  ok: boolean;
+  message: string;
+};
+
+const initialState: ReportState = {
+  ok: false,
+  message: "",
+};
 
 export function ReportForm() {
-  const [state, action] = useActionState(createMissingReport, initial);
+  const [state, action] = useActionState(createMissingReport, initialState);
+
   return (
-    <form action={action} className="space-y-5 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-6">
+    <form
+      action={action}
+      className="space-y-5 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-6"
+    >
       <input type="text" name="website" tabIndex={-1} autoComplete="off" className="hidden" aria-hidden="true" />
       {!state.ok && state.message ? <p className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">{state.message}</p> : null}
       <section className="space-y-3">

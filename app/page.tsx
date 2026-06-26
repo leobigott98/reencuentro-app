@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Search, ShieldCheck, Share2, Users, HeartHandshake, Clock3, HandHeart, LogIn } from "lucide-react";
+import { Search, ShieldCheck, Share2, Users, HeartHandshake, Clock3, HandHeart, LogIn, ClipboardList } from "lucide-react";
 import { supabaseAnon } from "@/lib/supabase";
 import { PersonCase } from "@/lib/types";
 import { InfiniteCases } from "@/components/InfiniteCases";
@@ -32,7 +32,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ q
           <Link href="/encontrados/subir" className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/30">Subir listado de encontrados</Link>
           <a href="#buscar" className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/30">Buscar caso</a>
           <Link href="/ayudar" className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/30">Quiero ayudar</Link>
+          <Link href="/sobrevivientes" className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/30">Buscar sobrevivientes</Link>
           <Link href="/mi-cuenta" className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/30">Mis reportes</Link>
+          <a href="/api/casos/export" className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/30">Descargar lista</a>
         </div>
       </section>
 
@@ -42,16 +44,17 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ q
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><Clock3 className="mb-2 text-cerca-600"/><p className="text-3xl font-black">{stats?.still_missing ?? 0}</p><p className="text-sm font-bold text-slate-600">Aún sin contacto</p></div>
       </section>
 
-      <section className="mt-4 grid gap-3 sm:grid-cols-2">
+      <section className="mt-4 grid gap-3 sm:grid-cols-3">
         <Link href="/ayudar" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><HandHeart className="mb-2 text-cerca-600"/><b>También puedes ayudar</b><p className="text-sm text-slate-600">Centros de acopio, solicitudes específicas, contactos, noticias y tips verificados.</p></Link>
         <Link href="/mi-cuenta" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><LogIn className="mb-2 text-cerca-600"/><b>Panel de reportante</b><p className="text-sm text-slate-600">Entra con OTP para ver vistas, compartidos, estado y evidencias privadas de tus casos.</p></Link>
+        <Link href="/sobrevivientes" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><ClipboardList className="mb-2 text-cerca-600"/><b>Buscar sobrevivientes</b><p className="text-sm text-slate-600">Consulta listados cargados desde hospitales, centros o consolidaciones verificables.</p></Link>
       </section>
 
-      <section className="mt-6 grid gap-3 sm:grid-cols-3">
+      {/* <section className="mt-6 grid gap-3 sm:grid-cols-3">
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><ShieldCheck className="mb-2 text-cerca-600"/><b>Privacidad primero</b><p className="text-sm text-slate-600">No publicamos teléfonos ni emails de familiares.</p></div>
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><Share2 className="mb-2 text-cerca-600"/><b>Compartir rápido</b><p className="text-sm text-slate-600">Cada ficha genera un mensaje seguro para WhatsApp y redes.</p></div>
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><Search className="mb-2 text-cerca-600"/><b>Estados validados</b><p className="text-sm text-slate-600">“Encontrado” requiere revisión, no un clic público.</p></div>
-      </section>
+      </section> */}
 
       <section id="buscar" className="mt-8">
         <form className="mb-4 grid gap-2 rounded-3xl bg-white p-2 shadow-sm ring-1 ring-slate-200 sm:grid-cols-[1fr_auto_auto]">
@@ -61,6 +64,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ q
             <option value="missing">Aún sin contacto</option>
             <option value="possibly_found">Posiblemente localizado/a</option>
             <option value="verifying_location">En verificación</option>
+            <option value="located">Localizada</option>
+            <option value="safe">A salvo</option>
+            <option value="hospitalized">Hospitalizada</option>
             <option value="found_alive">Localizado/a con vida</option>
             <option value="reunified">Reunificado/a</option>
           </select>

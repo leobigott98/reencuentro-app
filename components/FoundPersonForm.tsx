@@ -17,8 +17,9 @@ export function FoundPersonForm() {
         <div><label>Nombre y apellido *</label><input name="full_name" required /></div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div><label>Edad aproximada</label><input name="approximate_age" type="number" min="0" max="120" /></div>
-          <div><label>Foto pública de la persona</label><input name="photo_file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" /></div>
+          <div><label>Cédula de identidad</label><input name="document_id" placeholder="Opcional, ayuda a evitar duplicados" /></div>
         </div>
+        <div><label>Foto pública de la persona</label><input name="photo_file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" /></div>
         <div><label>Ubicación actual o lugar donde fue encontrada *</label><input name="current_location" required placeholder="Refugio, hospital, sector" /></div>
         <div><label>Notas públicas breves</label><textarea name="notes" rows={4} placeholder="Información útil no sensible" /></div>
         <div><label>Foto/evidencia privada adicional</label><input name="evidence_file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" /></div>

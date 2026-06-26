@@ -24,3 +24,4 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     { width: 1200, height: 630 }
   );
 }
+

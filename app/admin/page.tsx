@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { deleteAidResource, logout, markReportReviewed, updateCaseStatus } from "@/app/actions";
 import { AidResourceForm } from "@/components/AidResourceForm";
+import { SurvivorImportForm } from "@/components/SurvivorImportForm";
 import { isAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { AidResource, aidKindLabels, CaseStatus, PersonCase, statusLabels } from "@/lib/types";
@@ -62,7 +63,7 @@ export default async function AdminPage() {
             ))}
           </div>
         </div>
-        <AidResourceForm />
+        <div className="space-y-4"><AidResourceForm /><SurvivorImportForm /></div>
       </section>
 
       <section className="mb-8">

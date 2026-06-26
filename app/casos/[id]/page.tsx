@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { InfoForm } from "@/components/InfoForm";
 import { OwnerFoundForm } from "@/components/OwnerFoundForm";
 import { ShareButton } from "@/components/ShareButton";
+import { SubscribeForm } from "@/components/SubscribeForm";
 import { supabaseAdmin, supabaseAnon } from "@/lib/supabase";
 import { PersonCase, statusLabels } from "@/lib/types";
 
@@ -32,6 +33,7 @@ export default async function CasePage({ params, searchParams }: { params: Promi
           <h1 className="mt-3 text-3xl font-black sm:text-5xl">{c.full_name}</h1>
           <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
             <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Edad aproximada</dt><dd>{c.approximate_age ?? "No indicada"}</dd></div>
+            {c.document_last4 ? <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Cédula</dt><dd>Termina en {c.document_last4}</dd></div> : null}
             <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Última ubicación</dt><dd>{c.last_seen_location}</dd></div>
             {c.current_location ? <div className="rounded-2xl bg-amber-50 p-3"><dt className="font-bold">Ubicación reportada actual</dt><dd>{c.current_location}</dd></div> : null}
             <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Último contacto</dt><dd>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString("es-VE") : "No indicado"}</dd></div>
@@ -42,7 +44,7 @@ export default async function CasePage({ params, searchParams }: { params: Promi
           <p className="mt-3 text-xs text-slate-500">No se muestran teléfonos públicamente. Toda información enviada será revisada.</p>
           {qs.token ? <OwnerFoundForm publicCode={c.public_code} token={qs.token} /> : null}
         </section>
-        <aside><InfoForm personId={c.id} /></aside>
+        <aside><InfoForm personId={c.id} /><SubscribeForm personId={c.id} /></aside>
       </div>
     </main>
   );

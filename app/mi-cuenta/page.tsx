@@ -4,6 +4,7 @@ import { currentSession } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { signedEvidenceUrl } from "@/lib/uploads";
 import { PersonCase, statusLabels } from "@/lib/types";
+import { OwnerStatusForm } from "@/components/OwnerStatusForm";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,8 @@ export default async function MyAccountPage() {
                 <div className="rounded-2xl bg-slate-50 p-3"><p className="text-2xl font-black">{caseReports.length}</p><p className="text-sm text-slate-600">Avisos/evidencias</p></div>
               </div>
 
+              <OwnerStatusForm personId={c.id} />
+
               <section className="mt-4">
                 <h3 className="font-black">Información recibida</h3>
                 <div className="mt-2 space-y-2">
@@ -85,3 +88,4 @@ export default async function MyAccountPage() {
     </main>
   );
 }
+
