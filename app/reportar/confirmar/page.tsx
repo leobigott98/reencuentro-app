@@ -1,12 +1,19 @@
 import { ConfirmReportOtpForm } from "@/components/ConfirmReportOtpForm";
 
-export default function ConfirmarReportePage({
+type ConfirmarReporteSearchParams = Promise<{
+  draft?: string;
+  email?: string;
+}>;
+
+export default async function ConfirmarReportePage({
   searchParams,
 }: {
-  searchParams: { draft?: string; email?: string };
+  searchParams: ConfirmarReporteSearchParams;
 }) {
-  const draftId = searchParams.draft || "";
-  const email = searchParams.email || "";
+  const params = await searchParams;
+
+  const draftId = params.draft || "";
+  const email = params.email || "";
 
   if (!draftId || !email) {
     return (
@@ -31,6 +38,7 @@ export default function ConfirmarReportePage({
       <p className="mt-2 text-slate-600">
         Te enviamos un código de 6 dígitos. Escríbelo para publicar el reporte.
       </p>
+
       <div className="mt-5">
         <ConfirmReportOtpForm draftId={draftId} email={email} />
       </div>
