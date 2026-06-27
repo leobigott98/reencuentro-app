@@ -3,6 +3,7 @@ import { InfoForm } from "@/components/InfoForm";
 import { OwnerFoundForm } from "@/components/OwnerFoundForm";
 import { ShareButton } from "@/components/ShareButton";
 import { SubscribeForm } from "@/components/SubscribeForm";
+import { ReportProblemForm } from "@/components/ReportProblemForm";
 import { supabaseAdmin, supabaseAnon } from "@/lib/supabase";
 import { PersonCase, statusLabels } from "@/lib/types";
 import { relativeTime } from "@/lib/time";
@@ -45,7 +46,7 @@ export default async function CasePage({ params, searchParams }: { params: Promi
           <p className="mt-3 text-xs text-slate-500">No se muestran teléfonos públicamente. Toda información enviada será revisada.</p>
           {qs.token ? <OwnerFoundForm publicCode={c.public_code} token={qs.token} /> : null}
         </section>
-        <aside><InfoForm personId={c.id} /><SubscribeForm subjectType="missing_case" subjectId={c.id} title="Suscribirme a este caso" /></aside>
+        <aside className="grid gap-4"><InfoForm personId={c.id} /><SubscribeForm subjectType="missing_case" subjectId={c.id} title="Suscribirme a este caso" /><ReportProblemForm subjectType="missing_case" subjectId={c.id} /></aside>
       </div>
     </main>
   );

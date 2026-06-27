@@ -29,6 +29,7 @@ export function ReportForm() {
         <div><label>Nombre y apellido *</label><input name="full_name" required placeholder="Ej. María Pérez" /></div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div><label>Edad aproximada</label><input name="approximate_age" type="number" min="0" max="120" placeholder="Ej. 34" /></div>
+          <div><label>Cédula de identidad</label><input name="document_id" placeholder="Ej. V-12345678, opcional pero recomendado" /></div>
           <div><label>Foto principal</label><input name="photo_file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" /></div>
         </div>
         <div><label>Foto URL opcional</label><input name="photo_url" type="url" placeholder="https://... si ya tienes una imagen publicada" /></div>

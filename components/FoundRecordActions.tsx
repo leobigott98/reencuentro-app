@@ -11,6 +11,8 @@ const reportInitial: BasicActionState = { ok: false, message: "" };
 
 type FoundRecordActionsProps = {
   foundRecordId: string;
+  identityTitle?: string;
+  identityDescription?: string;
 };
 
 function FoundReportForm({
@@ -19,7 +21,7 @@ function FoundReportForm({
   title,
   description,
   submitLabel,
-}: FoundRecordActionsProps & {
+}: Pick<FoundRecordActionsProps, "foundRecordId"> & {
   reportType: "identity_tip" | "correction";
   title: string;
   description: string;
@@ -84,14 +86,14 @@ function FoundReportForm({
   );
 }
 
-export function FoundRecordActions({ foundRecordId }: FoundRecordActionsProps) {
+export function FoundRecordActions({ foundRecordId, identityTitle = "Creo conocer a esta persona", identityDescription = "Envía datos de contacto e información concreta. El aviso queda privado y pendiente de revisión." }: FoundRecordActionsProps) {
   return (
     <div className="grid gap-4">
       <FoundReportForm
         foundRecordId={foundRecordId}
         reportType="identity_tip"
-        title="Creo conocer a esta persona"
-        description="Envía datos de contacto e información concreta. El aviso queda privado y pendiente de revisión."
+        title={identityTitle}
+        description={identityDescription}
         submitLabel="Enviar información"
       />
       <SubscribeForm

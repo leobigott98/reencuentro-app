@@ -29,6 +29,11 @@ import {
   maybeCreatePossibleMatchesForMissingCase,
 } from "@/lib/matching";
 import { parseSurvivorWorkbook } from "@/lib/survivor-import";
+import { addTrustEvent } from "@/lib/trust";
+import {
+  maybeCreateFaceMatchesForFoundRecord,
+  maybeCreateFaceMatchesForMissingCase,
+} from "@/lib/face-matching";
 
 const baseUrl = () =>
   process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -407,6 +412,7 @@ export async function confirmMissingReportOtp(_: unknown, formData: FormData) {
   });
 
   await maybeCreatePossibleMatchesForMissingCase(person.id);
+  await maybeCreateFaceMatchesForMissingCase(person.id, payload.photo_url);
 
   await setSession(email, { allowPublicFallback: true });
   revalidatePath("/");
@@ -550,6 +556,139 @@ export async function confirmVolunteerRegistrationOtp(
   redirect("/voluntario");
 }
 
+
+const contentFlagSchema = z.object({
+  subject_type: z.enum(["missing_case", "found_record"]),
+  subject_id: z.string().uuid(),
+  reporter_email: z.string().email().optional().or(z.literal("")),
+  reason: z.enum([
+    "informacion_falsa",
+    "datos_sensibles",
+    "foto_inapropiada",
+    "duplicado",
+    "caso_de_menor",
+    "otro",
+  ]),
+  notes: z.string().max(1200).optional(),
+});
+
+export async function submitContentFlag(_: unknown, formData: FormData) {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar el reporte." };
+  const parsed = contentFlagSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: "Revisa el motivo del reporte." };
+
+  const data = parsed.data;
+  const db = supabaseAdmin();
+  const reporterEmail = data.reporter_email ? normalizeEmail(data.reporter_email) : null;
+
+  await db.from("content_flags").insert({
+    subject_type: data.subject_type,
+    subject_id: data.subject_id,
+    reporter_email: reporterEmail,
+    reason: data.reason,
+    notes: data.notes?.trim() || null,
+    status: "open",
+  });
+
+  const { count } = await db
+    .from("content_flags")
+    .select("id", { count: "exact", head: true })
+    .eq("subject_type", data.subject_type)
+    .eq("subject_id", data.subject_id)
+    .eq("status", "open");
+
+  let subjectUrl = baseUrl();
+  let subjectLabel = data.subject_type;
+  let thresholdAction = "admin_review";
+
+  if (data.subject_type === "found_record") {
+    const { data: found } = await db
+      .from("found_records")
+      .select("id, public_code, full_name, sensitivity_level, status")
+      .eq("id", data.subject_id)
+      .maybeSingle();
+    if (found) {
+      subjectUrl = `${baseUrl()}/encontrados/${found.public_code}`;
+      subjectLabel = found.full_name || found.public_code;
+      if ((count || 0) >= 3) {
+        if (found.sensitivity_level === "high_risk") {
+          thresholdAction = "hidden_high_risk";
+          await db.from("found_records").update({ status: "discarded", updated_at: new Date().toISOString() }).eq("id", found.id);
+        } else {
+          thresholdAction = "restricted";
+          await db.from("found_records").update({ sensitivity_level: "restricted", updated_at: new Date().toISOString() }).eq("id", found.id);
+        }
+      }
+    }
+  } else {
+    const { data: missing } = await db
+      .from("person_cases")
+      .select("id, public_code, full_name")
+      .eq("id", data.subject_id)
+      .maybeSingle();
+    if (missing) {
+      subjectUrl = `${baseUrl()}/casos/${missing.public_code}`;
+      subjectLabel = missing.full_name;
+    }
+  }
+
+  if ((count || 0) >= 3) {
+    const admins = adminEmails();
+    if (admins.length) {
+      await sendEmail({
+        to: admins,
+        subject: `Contenido reportado ${count} veces: ${subjectLabel}`,
+        html: `<p>Un contenido recibió ${count} reportes abiertos.</p><p><strong>Motivo reciente:</strong> ${data.reason}</p><p><strong>Acción automática:</strong> ${thresholdAction}</p><p><a href="${subjectUrl}">Ver contenido</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+      });
+    }
+  }
+
+  revalidatePath("/admin");
+  if (data.subject_type === "missing_case") revalidatePath("/casos/[id]");
+  if (data.subject_type === "found_record") revalidatePath("/encontrados/[code]");
+
+  return { ok: true, message: "Gracias. El reporte quedó registrado para revisión." };
+}
+
+export async function updateContentFlagStatus(formData: FormData) {
+  if (!(await isAdmin())) throw new Error("No autorizado");
+  const id = String(formData.get("id") || "");
+  const status = String(formData.get("status") || "open");
+  if (!id || !["open", "closed", "confirmed"].includes(status)) throw new Error("Estado inválido");
+
+  const db = supabaseAdmin();
+  const { data: flag } = await db
+    .from("content_flags")
+    .select("id, subject_type, subject_id, reason, notes")
+    .eq("id", id)
+    .maybeSingle();
+  if (!flag) return;
+
+  await db.from("content_flags").update({ status }).eq("id", id);
+
+  if (status === "confirmed") {
+    let actorEmail: string | null = null;
+    if (flag.subject_type === "missing_case") {
+      const { data: missing } = await db
+        .from("person_cases")
+        .select("owner_email")
+        .eq("id", flag.subject_id)
+        .maybeSingle();
+      actorEmail = (missing as any)?.owner_email || null;
+    }
+    if (flag.subject_type === "found_record") {
+      const { data: found } = await db
+        .from("found_records")
+        .select("created_by_email")
+        .eq("id", flag.subject_id)
+        .maybeSingle();
+      actorEmail = (found as any)?.created_by_email || null;
+    }
+    await addTrustEvent(actorEmail, "abuse_confirmed", -5, `${flag.reason}: ${flag.notes || "sin notas"}`);
+  }
+
+  revalidatePath("/admin");
+}
 const infoSchema = z.object({
   person_id: z.string().uuid(),
   info_name: z.string().min(3).max(160),
@@ -690,6 +829,8 @@ export async function requestOwnerFound(_: unknown, formData: FormData) {
     visibility: "private",
   });
 
+  await addTrustEvent(person.owner_email, "family_confirmed_found", 2, person.full_name);
+
   await db.from("verification_logs").insert({
     person_id: person.id,
     action: "owner_status:located",
@@ -811,6 +952,10 @@ export async function ownerUpdateCaseStatus(_: unknown, formData: FormData) {
     verification_status: "verified",
     visibility: "private",
   });
+
+  if (data.status === "safe" || data.status === "reunified" || data.status === "located") {
+    await addTrustEvent(session.email, "family_status_confirmed", 2, `${person.full_name}: ${data.status}`);
+  }
 
   await db.from("verification_logs").insert({
     person_id: person.id,
@@ -1083,6 +1228,10 @@ export async function markReportReviewed(formData: FormData) {
     .from("case_reports")
     .update({ verification_status: status })
     .eq("id", id);
+  if (status === "rejected") {
+    const { data: rejectedReport } = await db.from("case_reports").select("reporter_email, notes").eq("id", id).maybeSingle();
+    await addTrustEvent((rejectedReport as any)?.reporter_email, "record_rejected", -2, (rejectedReport as any)?.notes || "case report rejected");
+  }
   if (status === "verified") {
     const { data: report } = await db
       .from("case_reports")
@@ -1227,6 +1376,7 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
   });
 
   await maybeCreatePossibleMatchesForFoundRecord(found.id);
+  await maybeCreateFaceMatchesForFoundRecord(found.id, photoUrl);
 
   const admins = adminEmails();
   if (admins.length) {
@@ -1243,6 +1393,156 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
   redirect(`/encontrados/${found.public_code}`);
 }
 
+const deceasedStatusSchema = z.enum([
+  "deceased_unidentified",
+  "deceased_identity_probable",
+]);
+
+const deceasedRecordSchema = z.object({
+  full_name: z.string().max(160).optional(),
+  document_id: z.string().max(40).optional(),
+  approximate_age: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(120)
+    .optional()
+    .or(z.literal("")),
+  apparent_gender: z.enum(["female", "male", "unknown"]).optional().or(z.literal("")),
+  recovery_location: z.string().min(3).max(280),
+  current_location: z.string().min(3).max(280),
+  recovered_at: z.string().optional(),
+  notes_public: z.string().max(500).optional(),
+  notes_private: z.string().max(2000).optional(),
+  reporter_name: z.string().min(3).max(160),
+  reporter_phone: z.string().min(6).max(80),
+  reporter_email: z.string().email().optional().or(z.literal("")),
+  source_name: z.string().min(2).max(160),
+  status: deceasedStatusSchema,
+});
+
+export async function createDeceasedRecordReport(_: unknown, formData: FormData) {
+  if (isSpam(formData)) {
+    return { ok: false, message: "No se pudo procesar el registro." };
+  }
+
+  const parsed = deceasedRecordSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, message: "Revisa los campos obligatorios." };
+  }
+
+  const data = parsed.data;
+  const session = await currentSession();
+  const db = supabaseAdmin();
+  const normalizedDoc = normalizeDocumentId(text(formData, "document_id"));
+  const fullName = data.full_name?.trim() || null;
+  const reporterEmail = data.reporter_email ? normalizeEmail(data.reporter_email) : null;
+  const createdByEmail = session?.email || reporterEmail;
+  const ageRaw = text(formData, "approximate_age");
+  const ageValue = ageRaw ? Number(ageRaw) : null;
+
+  let photoPath: string | null = null;
+  let evidencePath: string | null = null;
+  try {
+    photoPath = await uploadPrivateEvidence(
+      file(formData, "photo_file"),
+      "deceased/private-photos",
+    );
+    evidencePath = await uploadPrivateEvidence(
+      file(formData, "evidence_file"),
+      "deceased/evidence",
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "No se pudo subir la evidencia privada.",
+    };
+  }
+
+  const public_code = crypto.randomUUID().slice(0, 8);
+  const now = new Date().toISOString();
+  const { data: found, error } = await db
+    .from("found_records")
+    .insert({
+      public_code,
+      created_by_email: createdByEmail,
+      created_by_name: data.reporter_name.trim(),
+      created_by_phone: data.reporter_phone.trim(),
+      source_name: data.source_name.trim(),
+      full_name: fullName,
+      normalized_name: normalizeNameForSearch(fullName),
+      document_id: normalizedDoc || null,
+      document_last4: documentLast4(normalizedDoc),
+      approximate_age: ageValue,
+      apparent_gender: data.apparent_gender || null,
+      photo_url: null,
+      photo_path: photoPath,
+      evidence_file_path: evidencePath,
+      status: data.status,
+      sensitivity_level: "high_risk",
+      found_location: data.recovery_location.trim(),
+      current_location: data.current_location.trim(),
+      notes_public: data.notes_public?.trim() || null,
+      notes_private: data.notes_private?.trim() || null,
+      found_at: optionalIsoDateTime(data.recovered_at),
+      created_at: now,
+      updated_at: now,
+    })
+    .select("id, public_code, full_name")
+    .single();
+
+  if (error || !found) {
+    return { ok: false, message: "No se pudo crear el registro." };
+  }
+
+  await db.from("found_record_reports").insert({
+    found_record_id: found.id,
+    reporter_name: data.reporter_name.trim(),
+    reporter_phone: data.reporter_phone.trim(),
+    reporter_email: reporterEmail,
+    source_name: data.source_name.trim(),
+    report_type: "deceased_record",
+    location: data.current_location.trim(),
+    notes: data.notes_private?.trim() || data.notes_public?.trim() || null,
+    evidence_file_path: evidencePath || photoPath,
+    verification_status: "pending",
+    visibility: "private",
+  });
+
+  await db.from("audit_logs").insert({
+    actor_email: createdByEmail,
+    action: "deceased_record_created",
+    subject_type: "found_record",
+    subject_id: found.id,
+    metadata: {
+      status: data.status,
+      source_name: data.source_name.trim(),
+      has_private_photo: Boolean(photoPath),
+      has_private_evidence: Boolean(evidencePath),
+    },
+  });
+
+  await maybeCreatePossibleMatchesForFoundRecord(found.id);
+  await maybeCreateFaceMatchesForFoundRecord(found.id, photoPath, "deceased_record");
+
+  const admins = adminEmails();
+  if (admins.length) {
+    await sendEmail({
+      to: admins,
+      subject: `Registro fallecido de alto resguardo: ${found.public_code}`,
+      html: `<p>Se creó un registro de persona fallecida o fallecida por identificar.</p><p><strong>Código:</strong> ${found.public_code}</p><p><strong>Estado:</strong> ${data.status}</p><p><strong>Institución o resguardo:</strong> ${data.current_location}</p><p>No se adjuntan ni muestran imágenes en este correo.</p><p><a href="${baseUrl()}/encontrados/${found.public_code}">Ver ficha pública</a></p><p><a href="${baseUrl()}/admin">Revisar evidencia en admin</a></p>`,
+    });
+  }
+
+  revalidatePath("/");
+  revalidatePath("/buscar");
+  revalidatePath("/admin");
+  revalidatePath(`/encontrados/${found.public_code}`);
+  redirect(`/encontrados/${found.public_code}`);
+}
 const foundRecordReportSchema = z.object({
   found_record_id: z.string().uuid(),
   report_type: z.enum(["identity_tip", "correction"]),
@@ -1335,6 +1635,241 @@ export async function confirmFoundRecordSubscription(
   nextFormData.set("subject_type", "found_record");
   nextFormData.set("subject_id", text(formData, "found_record_id"));
   return confirmGenericSubscription(prev, nextFormData);
+}
+const minorTemporaryCareSchema = z.object({
+  status: z.enum(["minor_temporary_care", "minor_unaccompanied"]),
+  approximate_age: z.coerce.number().int().min(0).max(17),
+  full_name: z.string().max(160).optional(),
+  found_location: z.string().min(3).max(280),
+  current_location: z.string().min(3).max(280),
+  found_at: z.string().optional(),
+  notes_private: z.string().max(2000).optional(),
+  caregiver_full_name: z.string().min(3).max(160),
+  caregiver_ci_number: z.string().min(4).max(80),
+  caregiver_phone: z.string().min(6).max(80),
+  caregiver_email: z.string().email(),
+  relationship_declared: z.string().min(2).max(160),
+  address_or_institution: z.string().min(5).max(280),
+  witness_name: z.string().max(160).optional(),
+  witness_phone: z.string().max(80).optional(),
+  handoff_notes: z.string().max(2000).optional(),
+});
+
+type MinorCareActionState = { ok: boolean; message: string };
+
+function canSubmitMinorCare(role: string | undefined) {
+  return role === "minor_caregiver" || role === "volunteer" || role === "admin";
+}
+
+export async function requestMinorTemporaryCareOtp(
+  _: MinorCareActionState,
+  formData: FormData,
+): Promise<MinorCareActionState> {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
+  const session = await currentSession();
+  if (!session || !canSubmitMinorCare(session.role)) {
+    return { ok: false, message: "Debes entrar como cuidador, voluntario o administrador." };
+  }
+
+  const parsed = minorTemporaryCareSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: "Revisa los campos obligatorios." };
+  const data = parsed.data;
+
+  const ciPhoto = file(formData, "ci_photo_file");
+  const caregiverPhoto = file(formData, "caregiver_photo_file");
+  if (!ciPhoto || !caregiverPhoto) {
+    return { ok: false, message: "Debes subir la cédula y foto del cuidador." };
+  }
+
+  let minorPhotoPath: string | null = null;
+  let caregiverCiPhotoPath: string | null = null;
+  let caregiverPhotoPath: string | null = null;
+  try {
+    minorPhotoPath = await uploadPrivateEvidence(file(formData, "photo_file"), "minors/private-photos");
+    caregiverCiPhotoPath = await uploadPrivateEvidence(ciPhoto, "minors/caregiver-ci");
+    caregiverPhotoPath = await uploadPrivateEvidence(caregiverPhoto, "minors/caregiver-photos");
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "No se pudieron subir los archivos privados.",
+    };
+  }
+
+  const email = normalizeEmail(data.caregiver_email);
+  const code = newOtpCode();
+  const payload = {
+    kind: "minor_temporary_care",
+    actor_email: session.email,
+    actor_role: session.role,
+    status: data.status,
+    approximate_age: data.approximate_age,
+    full_name: data.full_name?.trim() || null,
+    found_location: data.found_location.trim(),
+    current_location: data.current_location.trim(),
+    found_at: optionalIsoDateTime(data.found_at),
+    notes_private: data.notes_private?.trim() || null,
+    caregiver_full_name: data.caregiver_full_name.trim(),
+    caregiver_ci_number: data.caregiver_ci_number.trim(),
+    caregiver_phone: data.caregiver_phone.trim(),
+    caregiver_email: email,
+    relationship_declared: data.relationship_declared.trim(),
+    address_or_institution: data.address_or_institution.trim(),
+    witness_name: data.witness_name?.trim() || null,
+    witness_phone: data.witness_phone?.trim() || null,
+    handoff_notes: data.handoff_notes?.trim() || null,
+    minor_photo_path: minorPhotoPath,
+    caregiver_ci_photo_path: caregiverCiPhotoPath,
+    caregiver_photo_path: caregiverPhotoPath,
+  };
+
+  const db = supabaseAdmin();
+  const { data: draft, error } = await db
+    .from("report_drafts")
+    .insert({
+      email,
+      code_hash: hashCode(code),
+      payload,
+      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (error || !draft) return { ok: false, message: "No se pudo preparar la confirmación." };
+
+  await sendEmail({
+    to: [email],
+    subject: "Confirma el registro de cuidado temporal",
+    html: `<p>Recibimos un registro restringido de menor bajo cuidado temporal.</p><p>Confirma el correo del cuidador con este código:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${code}</p><p>Vence en 15 minutos. No lo compartas.</p>`,
+  });
+
+  redirect(`/menores/confirmar?draft=${draft.id}&email=${encodeURIComponent(email)}`);
+}
+
+const confirmMinorTemporaryCareSchema = z.object({
+  draft_id: z.string().uuid(),
+  email: z.string().email(),
+  code: z.string().min(6).max(12),
+});
+
+export async function confirmMinorTemporaryCareOtp(
+  _: MinorCareActionState,
+  formData: FormData,
+): Promise<MinorCareActionState> {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
+  const session = await currentSession();
+  if (!session || !canSubmitMinorCare(session.role)) {
+    return { ok: false, message: "Debes entrar como cuidador, voluntario o administrador." };
+  }
+
+  const parsed = confirmMinorTemporaryCareSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: "Revisa el código enviado." };
+  const email = normalizeEmail(parsed.data.email);
+  const codeHash = hashCode(parsed.data.code.replace(/\D/g, ""));
+  const db = supabaseAdmin();
+  const { data: draft } = await db
+    .from("report_drafts")
+    .select("id, email, code_hash, payload, expires_at, confirmed_at")
+    .eq("id", parsed.data.draft_id)
+    .eq("email", email)
+    .maybeSingle();
+
+  if (!draft || draft.confirmed_at || draft.code_hash !== codeHash || new Date(draft.expires_at).getTime() < Date.now()) {
+    return { ok: false, message: "Código inválido o vencido." };
+  }
+
+  const payload = draft.payload as any;
+  if (payload?.kind !== "minor_temporary_care") return { ok: false, message: "Solicitud inválida." };
+
+  const now = new Date().toISOString();
+  const public_code = crypto.randomUUID().slice(0, 8);
+  const verificationStatus = session.role === "admin" ? "verified" : session.role === "minor_caregiver" ? "reviewing" : "pending";
+  const fullName = payload.full_name || null;
+
+  const { data: found, error } = await db
+    .from("found_records")
+    .insert({
+      public_code,
+      created_by_email: session.email,
+      created_by_name: payload.caregiver_full_name,
+      created_by_phone: payload.caregiver_phone,
+      source_name: "Cuidado temporal de menor",
+      full_name: fullName,
+      normalized_name: normalizeNameForSearch(fullName),
+      approximate_age: payload.approximate_age,
+      photo_path: payload.minor_photo_path || null,
+      evidence_file_path: payload.minor_photo_path || null,
+      status: payload.status,
+      sensitivity_level: "high_risk",
+      found_location: payload.found_location,
+      current_location: payload.current_location,
+      notes_private: payload.notes_private,
+      found_at: payload.found_at || null,
+      created_at: now,
+      updated_at: now,
+    })
+    .select("id, public_code")
+    .single();
+
+  if (error || !found) return { ok: false, message: "No se pudo crear el registro restringido." };
+
+  await db.from("found_record_reports").insert({
+    found_record_id: found.id,
+    reporter_name: payload.caregiver_full_name,
+    reporter_phone: payload.caregiver_phone,
+    reporter_email: payload.caregiver_email,
+    source_name: "cuidado temporal",
+    report_type: "minor_temporary_care",
+    location: payload.current_location,
+    notes: payload.notes_private,
+    evidence_file_path: payload.minor_photo_path || null,
+    verification_status: verificationStatus,
+    visibility: "private",
+    caregiver_ci_number: payload.caregiver_ci_number,
+    caregiver_relationship_declared: payload.relationship_declared,
+    caregiver_address_or_institution: payload.address_or_institution,
+    witness_name: payload.witness_name,
+    witness_phone: payload.witness_phone,
+    caregiver_ci_photo_path: payload.caregiver_ci_photo_path,
+    caregiver_photo_path: payload.caregiver_photo_path,
+    minor_photo_path: payload.minor_photo_path,
+    handoff_notes: payload.handoff_notes,
+  });
+
+  await db.from("audit_logs").insert([
+    {
+      actor_email: session.email,
+      action: "minor_temporary_care_confirmed",
+      subject_type: "found_record",
+      subject_id: found.id,
+      metadata: { role: session.role, verification_status: verificationStatus },
+    },
+    {
+      actor_email: payload.caregiver_email,
+      action: "caregiver_otp_confirmed",
+      subject_type: "found_record",
+      subject_id: found.id,
+      metadata: { caregiver_ci_number: payload.caregiver_ci_number },
+    },
+  ]);
+
+  await db
+    .from("report_drafts")
+    .update({ confirmed_at: now })
+    .eq("id", draft.id);
+
+  const admins = adminEmails();
+  if (admins.length) {
+    await sendEmail({
+      to: admins,
+      subject: "Registro restringido de menor bajo cuidado temporal",
+      html: `<p>Se confirmó un registro restringido de menor bajo cuidado temporal.</p><p>Estado de verificación: ${verificationStatus}</p><p><a href="${baseUrl()}/menores/${found.public_code}">Ver detalle restringido</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+    });
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/voluntario");
+  revalidatePath(`/menores/${found.public_code}`);
+  redirect(`/menores/${found.public_code}?registrado=1`);
 }
 const otpRequestSchema = z.object({ email: z.string().email() });
 

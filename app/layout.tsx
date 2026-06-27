@@ -18,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav className="flex flex-wrap items-center justify-end gap-1 text-sm font-semibold sm:gap-2">
               <Link href="/buscar" className="rounded-full bg-slate-950 px-4 py-2 text-white">Buscar</Link>
               <Link href="/encontrados/subir" className="rounded-full px-3 py-2 text-slate-600">Registrar encontrado</Link>
+              <Link href="/fallecidos/registrar" className="rounded-full px-3 py-2 text-slate-600">Fallecidos</Link>
               <Link href="/voluntario" className="rounded-full px-3 py-2 text-slate-600">Voluntarios</Link>
               <Link href="/mi-cuenta" className="rounded-full px-3 py-2 text-slate-600">Mis reportes</Link>
               <Link href="/reportar" className="rounded-full bg-cerca-600 px-4 py-2 text-white">Reportar</Link>

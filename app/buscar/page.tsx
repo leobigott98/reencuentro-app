@@ -57,7 +57,9 @@ const foundStatusLabels: Record<string, string> = {
   hospitalized: "Hospitalizada",
   transferred: "Trasladada",
   minor_unaccompanied: "Menor sin acompañante",
+  minor_temporary_care: "Menor bajo cuidado temporal",
   deceased_unidentified: "Fallecida no identificada",
+  deceased_identity_probable: "Identidad probable pendiente",
   reunified: "Reunificada",
   released_to_family: "Con familia",
 };
@@ -103,21 +105,41 @@ function foundBadges(row: FoundRecordRow) {
   };
 }
 
+function isMinorRestrictedRecord(row: FoundRecordRow) {
+  return row.status === "minor_temporary_care" || row.status === "minor_unaccompanied";
+}
+
+function isDeceasedRestrictedRecord(row: FoundRecordRow) {
+  return row.status.includes("deceased");
+}
+
 function foundToResult(row: FoundRecordRow): PersonResultCardData {
   const badges = foundBadges(row);
+  const isMinorRestricted = isMinorRestrictedRecord(row);
+  const isDeceasedRestricted = isDeceasedRestrictedRecord(row);
+  const isRestrictedPublic = isMinorRestricted || isDeceasedRestricted;
   return {
     id: row.id,
-    href: `/encontrados/${row.public_code}`,
+    href: isMinorRestricted ? `/menores/${row.public_code}` : `/encontrados/${row.public_code}`,
     kind: "found",
-    name: row.full_name,
+    name: isMinorRestricted
+      ? "Menor bajo cuidado temporal registrado"
+      : isDeceasedRestricted
+        ? "Persona fallecida por identificar"
+        : row.full_name,
     status: row.status,
     statusLabel: foundStatusLabels[row.status] || row.status,
-    location: row.current_location || row.found_location,
+    location: isMinorRestricted
+      ? "Ubicación resguardada"
+      : isDeceasedRestricted
+        ? row.current_location || row.found_location || "Ubicación bajo resguardo"
+        : row.current_location || row.found_location,
     timestamp: row.found_at || row.updated_at || row.created_at,
-    sourceName: row.source_name || row.created_by_name,
-    hasPhoto: Boolean(row.photo_url),
-    documentLast4: row.document_last4,
+    sourceName: isRestrictedPublic ? "Registro de alto resguardo" : row.source_name || row.created_by_name,
+    hasPhoto: isRestrictedPublic ? false : Boolean(row.photo_url),
+    documentLast4: isRestrictedPublic ? null : row.document_last4,
     ...badges,
+    sensitive: badges.sensitive || isRestrictedPublic,
   };
 }
 
@@ -262,7 +284,9 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
                   <option value="hospitalized">Hospitalizada</option>
                   <option value="transferred">Trasladada</option>
                   <option value="minor_unaccompanied">Menor sin acompañante</option>
+                  <option value="minor_temporary_care">Menor bajo cuidado temporal</option>
                   <option value="deceased_unidentified">Fallecida no identificada</option>
+                  <option value="deceased_identity_probable">Identidad probable pendiente</option>
                 </>
               ) : (
                 <>

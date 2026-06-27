@@ -47,7 +47,7 @@ export default async function Home({
               Buscar primero · Reportar si no aparece · Recibir futuras coincidencias
             </p>
             <h1 className="max-w-4xl text-3xl font-black tracking-tight sm:text-5xl">
-              Busca personas encontradas, hospitalizadas o por identificar.
+              Encuentra personas rescatadas, hospitalizadas o por identificar.
             </h1>
             <p className="mt-4 max-w-3xl text-cerca-50">
               Empieza revisando registros de personas encontradas, rescatadas,
@@ -55,7 +55,7 @@ export default async function Home({
               la desaparición y suscríbete para recibir avisos cuando entren
               nuevos listados o registros compatibles.
             </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Link
                 href="/buscar"
                 className="rounded-2xl bg-white px-5 py-3 text-center font-black text-slate-950"
@@ -73,6 +73,12 @@ export default async function Home({
                 className="rounded-2xl bg-cerca-500 px-5 py-3 text-center font-black text-white"
               >
                 Registrar persona encontrada
+              </Link>
+              <Link
+                href="/voluntarios/registro"
+                className="rounded-2xl bg-white/10 px-5 py-3 text-center font-black text-white ring-1 ring-white/25"
+              >
+                Registrarme como voluntario
               </Link>
             </div>
           </div>
@@ -103,16 +109,38 @@ export default async function Home({
         </div>
       </section>
 
+
+      <section className="mt-4 rounded-[2rem] bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
+        <form action="/buscar" className="grid gap-3 lg:grid-cols-[1fr_180px_1fr_auto]">
+          <input type="hidden" name="tab" value="encontradas" />
+          <div>
+            <label>Nombre</label>
+            <input name="name" placeholder="Nombre o apellido" />
+          </div>
+          <div>
+            <label>Cédula</label>
+            <input name="document_id" placeholder="Cédula / 1234" />
+          </div>
+          <div>
+            <label>Centro o ubicación</label>
+            <input name="location" placeholder="Hospital, refugio, zona" />
+          </div>
+          <div className="flex items-end">
+            <button className="w-full rounded-2xl bg-slate-950 px-5 py-3 font-black text-white">Buscar persona</button>
+          </div>
+        </form>
+        <p className="mt-3 text-sm text-slate-600">Busca por nombre, cédula, últimos 4 dígitos, centro o zona. Primero revisamos personas encontradas, hospitalizadas o por identificar.</p>
+      </section>
       <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <Users className="mb-2 text-cerca-600" />
           <p className="text-3xl font-black">{stats?.missing_count ?? 0}</p>
-          <p className="text-sm font-bold text-slate-600">Reportes de desaparición</p>
+          <p className="text-sm font-bold text-slate-600">Desaparecidos reportados</p>
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <HeartHandshake className="mb-2 text-cerca-600" />
           <p className="text-3xl font-black">{stats?.found_count ?? 0}</p>
-          <p className="text-sm font-bold text-slate-600">Registros encontrados</p>
+          <p className="text-sm font-bold text-slate-600">Personas encontradas registradas</p>
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <FileSearch className="mb-2 text-cerca-600" />
@@ -126,36 +154,32 @@ export default async function Home({
         </div>
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <ShieldCheck className="mb-2 text-cerca-600" />
-          <p className="text-3xl font-black">{stats?.deceased_unidentified_count ?? 0}</p>
-          <p className="text-sm font-bold text-slate-600">Fallecidas sin identificar</p>
+          <p className="text-3xl font-black">{stats?.reunified_count ?? 0}</p>
+          <p className="text-sm font-bold text-slate-600">Reunificadas</p>
         </div>
       </section>
 
-      <section className="mt-4 grid gap-3 lg:grid-cols-3">
-        <Link href="/buscar" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <Search className="mb-2 text-cerca-600" />
-          <b>Búsqueda unificada</b>
-          <p className="text-sm text-slate-600">
-            Alterna entre personas encontradas y desaparecidas, filtrando por
-            nombre, documento, ubicación, centro o estado.
-          </p>
-        </Link>
-        <Link href="/encontrados/subir" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <ClipboardList className="mb-2 text-cerca-600" />
-          <b>Registrar encontrados</b>
-          <p className="text-sm text-slate-600">
-            Carga una persona, CSV, XLSX, XLS o filas pegadas con fuente,
-            ubicación y responsable privado.
-          </p>
-        </Link>
-        <Link href="/mi-cuenta" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <BadgeCheck className="mb-2 text-cerca-600" />
-          <b>Suscripción y confirmación</b>
-          <p className="text-sm text-slate-600">
-            Los reportes familiares reciben actualizaciones y futuras posibles
-            coincidencias para revisión.
-          </p>
-        </Link>
+      <section className="mt-6 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-[2rem] bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <h2 className="text-2xl font-black">Cómo funciona</h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {["Buscas", "Si no aparece, reportas", "Voluntarios suben encontrados/listas", "La app avisa posibles coincidencias"].map((item, index) => (
+              <div key={item} className="rounded-2xl bg-slate-50 p-3 text-sm">
+                <span className="mb-2 grid h-7 w-7 place-items-center rounded-full bg-slate-950 text-xs font-black text-white">{index + 1}</span>
+                <b>{item}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-[2rem] bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <h2 className="text-2xl font-black">Seguridad</h2>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <p className="rounded-2xl bg-slate-50 p-3">Teléfonos privados</p>
+            <p className="rounded-2xl bg-slate-50 p-3">Evidencia sensible restringida</p>
+            <p className="rounded-2xl bg-slate-50 p-3">Menores y fallecidos con manejo especial</p>
+            <p className="rounded-2xl bg-slate-50 p-3">Timestamps y fuente visible</p>
+          </div>
+        </div>
       </section>
 
       <section className="mt-8">

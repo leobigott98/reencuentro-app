@@ -145,7 +145,7 @@ export default async function VolunteerDashboardPage() {
         </p>
       </section>
 
-      <section className="mb-6 grid gap-3 sm:grid-cols-3">
+      <section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Link href="/encontrados/subir" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <p className="font-black">Subir información</p>
           <p className="mt-1 text-sm text-slate-600">Reporta una persona encontrada o carga un listado.</p>
@@ -156,7 +156,7 @@ export default async function VolunteerDashboardPage() {
         </Link>
         <Link href="/menores/cuidado-temporal" className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
           <p className="font-black">Menores en cuidado temporal</p>
-          <p className="mt-1 text-sm text-slate-600">Accede al flujo para cuidado temporal de menores.</p>
+          <p className="mt-1 text-sm text-slate-600">Registra un menor bajo cuidado temporal con evidencia privada y OTP.</p>
         </Link>
       </section>
 

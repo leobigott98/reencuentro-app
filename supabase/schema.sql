@@ -2,6 +2,7 @@
 -- Ejecuta esto en Supabase SQL Editor. Migra v1/v2/v3 sin perder datos.
 
 create extension if not exists pgcrypto;
+create extension if not exists vector;
 create extension if not exists pg_trgm;
 
 do $$ begin
@@ -302,6 +303,16 @@ create table if not exists found_record_reports (
   created_at timestamptz default now()
 );
 
+
+alter table found_record_reports add column if not exists caregiver_ci_number text;
+alter table found_record_reports add column if not exists caregiver_relationship_declared text;
+alter table found_record_reports add column if not exists caregiver_address_or_institution text;
+alter table found_record_reports add column if not exists witness_name text;
+alter table found_record_reports add column if not exists witness_phone text;
+alter table found_record_reports add column if not exists caregiver_ci_photo_path text;
+alter table found_record_reports add column if not exists caregiver_photo_path text;
+alter table found_record_reports add column if not exists minor_photo_path text;
+alter table found_record_reports add column if not exists handoff_notes text;
 create table if not exists generic_subscriptions (
   id uuid primary key default gen_random_uuid(),
   subject_type text not null,
@@ -330,6 +341,38 @@ create table if not exists possible_matches (
   updated_at timestamptz default now()
 );
 
+
+create table if not exists audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  actor_email text,
+  action text not null,
+  subject_type text,
+  subject_id uuid,
+  metadata jsonb,
+  created_at timestamptz default now()
+);
+
+create table if not exists content_flags (
+  id uuid primary key default gen_random_uuid(),
+  subject_type text not null,
+  subject_id uuid not null,
+  reporter_email text,
+  reason text not null,
+  notes text,
+  status text not null default 'open',
+  created_at timestamptz default now()
+);
+
+create table if not exists face_embeddings (
+  id uuid primary key default gen_random_uuid(),
+  subject_type text not null,
+  subject_id uuid not null,
+  image_path text not null,
+  embedding vector(128),
+  model text,
+  created_at timestamptz default now(),
+  unique(subject_type, subject_id, image_path)
+);
 create table if not exists trust_events (
   id uuid primary key default gen_random_uuid(),
   actor_email text,
@@ -471,7 +514,10 @@ alter table found_records enable row level security;
 alter table found_record_reports enable row level security;
 alter table generic_subscriptions enable row level security;
 alter table possible_matches enable row level security;
+alter table content_flags enable row level security;
+alter table face_embeddings enable row level security;
 alter table trust_events enable row level security;
+alter table audit_logs enable row level security;
 
 drop policy if exists "Service role can manage person_cases" on person_cases;
 drop policy if exists "Service role can manage case_reports" on case_reports;
@@ -487,7 +533,10 @@ drop policy if exists "Service role can manage found_records" on found_records;
 drop policy if exists "Service role can manage found_record_reports" on found_record_reports;
 drop policy if exists "Service role can manage generic_subscriptions" on generic_subscriptions;
 drop policy if exists "Service role can manage possible_matches" on possible_matches;
+drop policy if exists "Service role can manage content_flags" on content_flags;
+drop policy if exists "Service role can manage face_embeddings" on face_embeddings;
 drop policy if exists "Service role can manage trust_events" on trust_events;
+drop policy if exists "Service role can manage audit_logs" on audit_logs;
 
 create policy "Service role can manage person_cases" on person_cases for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 create policy "Service role can manage case_reports" on case_reports for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
@@ -503,7 +552,10 @@ create policy "Service role can manage found_records" on found_records for all u
 create policy "Service role can manage found_record_reports" on found_record_reports for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 create policy "Service role can manage generic_subscriptions" on generic_subscriptions for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 create policy "Service role can manage possible_matches" on possible_matches for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy "Service role can manage content_flags" on content_flags for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy "Service role can manage face_embeddings" on face_embeddings for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 create policy "Service role can manage trust_events" on trust_events for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy "Service role can manage audit_logs" on audit_logs for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 
 grant select on public_person_cases to anon, authenticated;
 grant select on public_found_records to anon, authenticated;
@@ -555,5 +607,12 @@ create index if not exists idx_possible_matches_missing_case_id on possible_matc
 create index if not exists idx_possible_matches_found_record_id on possible_matches(found_record_id);
 create index if not exists idx_possible_matches_status on possible_matches(status);
 create unique index if not exists idx_possible_matches_unique_pair_type on possible_matches(missing_case_id, found_record_id, match_type);
+create index if not exists idx_audit_logs_subject on audit_logs(subject_type, subject_id);
+create index if not exists idx_audit_logs_actor_email on audit_logs(actor_email);
+create index if not exists idx_audit_logs_created_at on audit_logs(created_at desc);
+create index if not exists idx_content_flags_subject on content_flags(subject_type, subject_id);
+create index if not exists idx_content_flags_status on content_flags(status);
+create index if not exists idx_face_embeddings_subject on face_embeddings(subject_type, subject_id);
+create index if not exists idx_face_embeddings_vector on face_embeddings using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 create index if not exists idx_trust_events_actor_email on trust_events(actor_email);
 create index if not exists idx_trust_events_created_at on trust_events(created_at desc);

@@ -24,6 +24,8 @@ type FoundRecord = {
   found_location: string | null;
   current_location: string | null;
   source_name: string | null;
+  status: string | null;
+  sensitivity_level: string | null;
 };
 
 type MatchInput = {
@@ -138,7 +140,7 @@ async function getFoundRecord(foundRecordId: string) {
   const { data } = await supabaseAdmin()
     .from("found_records")
     .select(
-      "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name",
+      "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name, status, sensitivity_level",
     )
     .eq("id", foundRecordId)
     .neq("status", "discarded")
@@ -148,6 +150,10 @@ async function getFoundRecord(foundRecordId: string) {
 
 async function insertPossibleMatch(input: MatchInput) {
   const db = supabaseAdmin();
+  const isHighRiskFound =
+    input.found.status?.includes("deceased") ||
+    input.found.sensitivity_level === "high_risk";
+  const shouldNotify = input.notify && !isHighRiskFound;
   const { data: existing } = await db
     .from("possible_matches")
     .select("id")
@@ -163,12 +169,12 @@ async function insertPossibleMatch(input: MatchInput) {
     found_record_id: input.found.id,
     match_type: input.matchType,
     score: input.score,
-    status: "pending",
-    notified_at: input.notify ? new Date().toISOString() : null,
+    status: isHighRiskFound ? "reviewing" : "pending",
+    notified_at: shouldNotify ? new Date().toISOString() : null,
   });
 
   if (error) return false;
-  if (input.notify) await notifyPossibleMatch(input.missing, input.found);
+  if (shouldNotify) await notifyPossibleMatch(input.missing, input.found);
   return true;
 }
 
@@ -214,7 +220,7 @@ async function findFoundCandidates(missing: MissingCase) {
       db
         .from("found_records")
         .select(
-          "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name",
+          "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name, status, sensitivity_level",
         )
         .eq("document_id", missing.document_id)
         .neq("status", "discarded")
@@ -227,7 +233,7 @@ async function findFoundCandidates(missing: MissingCase) {
       db
         .from("found_records")
         .select(
-          "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name",
+          "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name, status, sensitivity_level",
         )
         .eq("document_last4", last4)
         .neq("status", "discarded")
@@ -238,7 +244,7 @@ async function findFoundCandidates(missing: MissingCase) {
     db
       .from("found_records")
       .select(
-        "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name",
+        "id, public_code, full_name, document_id, document_last4, found_location, current_location, source_name, status, sensitivity_level",
       )
       .neq("status", "discarded")
       .order("updated_at", { ascending: false })
