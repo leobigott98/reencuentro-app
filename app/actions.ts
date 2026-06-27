@@ -24,6 +24,10 @@ import {
   uploadPublicCasePhoto,
 } from "@/lib/uploads";
 import { isSpreadsheetFile, parseFoundCsv, parseFoundWorkbook } from "@/lib/csv";
+import {
+  maybeCreatePossibleMatchesForFoundRecord,
+  maybeCreatePossibleMatchesForMissingCase,
+} from "@/lib/matching";
 import { parseSurvivorWorkbook } from "@/lib/survivor-import";
 
 const baseUrl = () =>
@@ -88,60 +92,6 @@ function foundSensitivityLevel(
   return "normal";
 }
 
-type FoundRecordForMatch = {
-  id: string;
-  public_code: string;
-  full_name: string | null;
-  current_location: string | null;
-  source_name: string | null;
-};
-
-async function notifyDocumentMatch(
-  found: FoundRecordForMatch,
-  documentId: string,
-) {
-  if (!documentId) return false;
-  const db = supabaseAdmin();
-  const { data: missing } = await db
-    .from("person_cases")
-    .select("id, public_code, full_name")
-    .eq("document_id", documentId)
-    .eq("status", "missing")
-    .maybeSingle();
-
-  if (!missing) return false;
-
-  await db.from("possible_matches").insert({
-    missing_case_id: missing.id,
-    found_record_id: found.id,
-    match_type: "document_id",
-    score: 1.0,
-    status: "pending",
-    notified_at: new Date().toISOString(),
-  });
-
-  const foundName = found.full_name || "persona sin identificar";
-  const html = `<p>Se cargó una ficha de persona encontrada que coincide por documento con <strong>${missing.full_name}</strong>.</p><p><strong>Registro encontrado:</strong> ${foundName}</p><p><strong>Ubicación actual:</strong> ${found.current_location || "No indicada"}</p><p><a href="${baseUrl()}/encontrados/${found.public_code}">Ver ficha de encontrado</a></p><p><a href="${baseUrl()}/casos/${missing.public_code}">Ver caso original</a></p>`;
-
-  await notifyCaseOwner(
-    missing.id,
-    `Posible coincidencia encontrada: ${missing.full_name}`,
-    html,
-  );
-  await notifySubscribers(
-    "missing_case",
-    missing.id,
-    `Posible coincidencia para ${missing.full_name}`,
-    html,
-  );
-  await notifySubscribers(
-    "found_record",
-    found.id,
-    `Posible coincidencia para ${foundName}`,
-    html,
-  );
-  return true;
-}
 export type SubscriptionSubjectType = "missing_case" | "found_record" | "upload_batch";
 
 export type GenericSubscriptionRequestState = {
@@ -455,6 +405,8 @@ export async function confirmMissingReportOtp(_: unknown, formData: FormData) {
     subject: `Tu reporte fue publicado: ${person.full_name}`,
     html: `<p>Gracias por confirmar tu correo.</p><p>Ficha pública: <a href="${publicUrl}">${publicUrl}</a></p><p>Enlace privado de gestión: <a href="${manageUrl}">${manageUrl}</a></p><p>También puedes entrar a tu panel con OTP desde <a href="${baseUrl()}/mi-cuenta">Mis reportes</a>.</p>`,
   });
+
+  await maybeCreatePossibleMatchesForMissingCase(person.id);
 
   await setSession(email, { allowPublicFallback: true });
   revalidatePath("/");
@@ -989,7 +941,7 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
     return { ok: false, message: "No se pudo crear el lote de carga." };
   }
 
-  const inserted: FoundRecordForMatch[] = [];
+  const inserted: { id: string }[] = [];
   let skippedDuplicates = 0;
   let possibleMatchCount = 0;
 
@@ -1040,7 +992,7 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
       .single();
 
     if (!error && found) {
-      inserted.push(found as FoundRecordForMatch);
+      inserted.push(found);
       await db.from("found_record_reports").insert({
         found_record_id: found.id,
         reporter_name: data.uploader_name.trim(),
@@ -1057,9 +1009,8 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
         verification_status: "pending",
         visibility: "private",
       });
-      if (await notifyDocumentMatch(found as FoundRecordForMatch, rowDoc)) {
-        possibleMatchCount += 1;
-      }
+      const matchResult = await maybeCreatePossibleMatchesForFoundRecord(found.id);
+      possibleMatchCount += matchResult.created;
     }
   }
 
@@ -1275,7 +1226,7 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
     visibility: "private",
   });
 
-  await notifyDocumentMatch(found as FoundRecordForMatch, normalizedDoc);
+  await maybeCreatePossibleMatchesForFoundRecord(found.id);
 
   const admins = adminEmails();
   if (admins.length) {

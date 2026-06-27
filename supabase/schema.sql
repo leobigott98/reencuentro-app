@@ -2,6 +2,7 @@
 -- Ejecuta esto en Supabase SQL Editor. Migra v1/v2/v3 sin perder datos.
 
 create extension if not exists pgcrypto;
+create extension if not exists pg_trgm;
 
 do $$ begin
   create type case_status as enum (
@@ -553,5 +554,6 @@ create index if not exists idx_generic_subscriptions_unsubscribe_token on generi
 create index if not exists idx_possible_matches_missing_case_id on possible_matches(missing_case_id);
 create index if not exists idx_possible_matches_found_record_id on possible_matches(found_record_id);
 create index if not exists idx_possible_matches_status on possible_matches(status);
+create unique index if not exists idx_possible_matches_unique_pair_type on possible_matches(missing_case_id, found_record_id, match_type);
 create index if not exists idx_trust_events_actor_email on trust_events(actor_email);
 create index if not exists idx_trust_events_created_at on trust_events(created_at desc);

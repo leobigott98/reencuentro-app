@@ -4,7 +4,7 @@ import { AidResourceForm } from "@/components/AidResourceForm";
 import { SurvivorImportForm } from "@/components/SurvivorImportForm";
 import { isAdmin } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
-import { AidResource, aidKindLabels, CaseStatus, PersonCase, statusLabels } from "@/lib/types";
+import { AidResource, aidKindLabels, PersonCase, statusLabels } from "@/lib/types";
 import { signedEvidenceUrl } from "@/lib/uploads";
 
 export const dynamic = "force-dynamic";
@@ -21,20 +21,29 @@ function LoginRequired() {
   );
 }
 
+function relatedRow(value: unknown) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export default async function AdminPage() {
   if (!(await isAdmin())) return <LoginRequired />;
   const db = supabaseAdmin();
-  const [{ data: cases }, { data: rawReports }, { data: aidResources }] = await Promise.all([
+  const [{ data: cases }, { data: rawReports }, { data: aidResources }, { data: possibleMatches }] = await Promise.all([
     db.from("person_cases").select("*").order("updated_at", { ascending: false }).limit(100),
     db.from("case_reports").select("*, person_cases(full_name, public_code, owner_email)").order("created_at", { ascending: false }).limit(100),
-    db.from("aid_resources").select("*").eq("is_published", true).order("updated_at", { ascending: false }).limit(100)
+    db.from("aid_resources").select("*").eq("is_published", true).order("updated_at", { ascending: false }).limit(100),
+    db
+      .from("possible_matches")
+      .select("id, match_type, score, status, created_at, person_cases(full_name, public_code), found_records(full_name, public_code, current_location, source_name)")
+      .order("created_at", { ascending: false })
+      .limit(50),
   ]);
   const reports = await Promise.all((rawReports || []).map(async (r: any) => ({ ...r, signed_evidence_url: await signedEvidenceUrl(r.evidence_file_path) })));
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <div><h1 className="text-3xl font-black">Panel de verificación</h1><p className="text-slate-600">Casos, avisos privados e información pública de ayuda.</p></div>
+        <div><h1 className="text-3xl font-black">Panel de verificación</h1><p className="text-slate-600">Casos, posibles coincidencias, avisos privados e información pública de ayuda.</p></div>
         <form action={logout}><button className="rounded-2xl bg-slate-200 px-4 py-2 font-bold">Salir</button></form>
       </div>
 
@@ -67,6 +76,38 @@ export default async function AdminPage() {
       </section>
 
       <section className="mb-8">
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-black">Posibles coincidencias</h2>
+            <p className="text-sm text-slate-600">Coincidencias no faciales creadas por documento, últimos 4 dígitos, nombre y ubicación.</p>
+          </div>
+          <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-black text-slate-700">{(possibleMatches || []).length}</span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {!(possibleMatches || []).length ? (
+            <p className="rounded-3xl bg-white p-4 text-sm text-slate-600 ring-1 ring-slate-200 sm:col-span-2">Todavía no hay posibles coincidencias.</p>
+          ) : null}
+          {(possibleMatches || []).map((match: any) => {
+            const missing = relatedRow(match.person_cases) as any;
+            const found = relatedRow(match.found_records) as any;
+            return (
+              <article key={match.id} className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="rounded-full bg-amber-50 px-3 py-1 text-xs font-black uppercase text-amber-800">{match.match_type}</p>
+                  <p className="text-xs font-black text-slate-500">Score {Number(match.score || 0).toFixed(2)} · {match.status}</p>
+                </div>
+                <div className="mt-3 grid gap-2 text-sm">
+                  <Link href={`/casos/${missing?.public_code}`} className="font-black underline">Desaparecido: {missing?.full_name || "Caso"}</Link>
+                  <Link href={`/encontrados/${found?.public_code}`} className="font-black underline">Encontrado: {found?.full_name || "Persona por identificar"}</Link>
+                  <p className="text-slate-600">{found?.current_location || found?.source_name || "Ubicación no indicada"}</p>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mb-8">
         <h2 className="mb-3 text-xl font-black">Información pública de ayuda</h2>
         <div className="grid gap-3 sm:grid-cols-2">
           {((aidResources || []) as AidResource[]).map((r) => (
@@ -89,15 +130,15 @@ export default async function AdminPage() {
                 <div>
                   <p className="text-xs font-black uppercase text-cerca-700">{r.report_type} · {r.verification_status}</p>
                   <h3 className="text-lg font-black">{r.person_cases?.full_name || "Caso"}</h3>
-                  <p className="text-xs text-slate-500">Dueño del caso: {r.person_cases?.owner_email || "—"}</p>
+                  <p className="text-xs text-slate-500">Dueño del caso: {r.person_cases?.owner_email || "-"}</p>
                 </div>
                 <a className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-bold" href={`/casos/${r.person_cases?.public_code}`}>Abrir ficha</a>
               </div>
               <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                 <p><b>Reportante:</b> {r.reporter_name}</p>
                 <p><b>Teléfono privado:</b> {r.reporter_phone}</p>
-                <p><b>Email:</b> {r.reporter_email || "—"}</p>
-                <p><b>Ubicación reportada:</b> {r.seen_location || "—"}</p>
+                <p><b>Email:</b> {r.reporter_email || "-"}</p>
+                <p><b>Ubicación reportada:</b> {r.seen_location || "-"}</p>
               </div>
               <p className="mt-3 whitespace-pre-wrap rounded-2xl bg-slate-50 p-3 text-sm">{r.notes || "Sin notas"}</p>
               {r.evidence_url ? <a className="mt-2 block text-sm font-bold text-cerca-700 underline" href={r.evidence_url}>Ver evidencia externa</a> : null}
