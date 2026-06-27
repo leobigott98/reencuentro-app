@@ -1,23 +1,13 @@
 "use client";
 
 import { useActionState } from "react";
-import {
-  confirmFoundRecordSubscription,
-  requestFoundRecordSubscription,
-  submitFoundRecordReport,
-} from "@/app/actions";
+import { submitFoundRecordReport } from "@/app/actions";
 import { SubmitButton } from "./SubmitButton";
+import { SubscribeForm } from "./SubscribeForm";
 
 type BasicActionState = { ok: boolean; message: string };
 
-type FoundSubscriptionState = BasicActionState & {
-  foundRecordId?: string;
-  email?: string;
-};
-
 const reportInitial: BasicActionState = { ok: false, message: "" };
-const subscriptionInitial: FoundSubscriptionState = { ok: false, message: "" };
-const confirmInitial: BasicActionState = { ok: false, message: "" };
 
 type FoundRecordActionsProps = {
   foundRecordId: string;
@@ -94,103 +84,6 @@ function FoundReportForm({
   );
 }
 
-function ConfirmFoundSubscription({
-  foundRecordId,
-  email,
-}: {
-  foundRecordId: string;
-  email: string;
-}) {
-  const [state, action] = useActionState<BasicActionState, FormData>(
-    confirmFoundRecordSubscription,
-    confirmInitial,
-  );
-  return (
-    <form
-      action={action}
-      className="space-y-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"
-    >
-      <input
-        type="text"
-        name="website"
-        tabIndex={-1}
-        autoComplete="off"
-        className="hidden"
-        aria-hidden="true"
-      />
-      <input type="hidden" name="found_record_id" value={foundRecordId} />
-      <input type="hidden" name="email" value={email} />
-      <h2 className="text-lg font-black">Confirmar suscripción</h2>
-      <p className="text-sm text-slate-600">
-        Enviamos un código a <b>{email}</b>.
-      </p>
-      {state.message ? (
-        <p
-          className={`rounded-2xl p-3 text-sm ${state.ok ? "bg-cerca-50 text-cerca-900" : "bg-red-50 text-red-700"}`}
-        >
-          {state.message}
-        </p>
-      ) : null}
-      <div>
-        <label>Código OTP *</label>
-        <input name="code" inputMode="numeric" autoComplete="one-time-code" required />
-      </div>
-      <SubmitButton>Confirmar</SubmitButton>
-    </form>
-  );
-}
-
-function FoundSubscriptionForm({ foundRecordId }: FoundRecordActionsProps) {
-  const [state, action] = useActionState<FoundSubscriptionState, FormData>(
-    requestFoundRecordSubscription,
-    subscriptionInitial,
-  );
-  if (state.ok && state.foundRecordId && state.email) {
-    return (
-      <ConfirmFoundSubscription
-        foundRecordId={state.foundRecordId}
-        email={state.email}
-      />
-    );
-  }
-  return (
-    <form
-      action={action}
-      className="space-y-3 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"
-    >
-      <input
-        type="text"
-        name="website"
-        tabIndex={-1}
-        autoComplete="off"
-        className="hidden"
-        aria-hidden="true"
-      />
-      <input type="hidden" name="found_record_id" value={foundRecordId} />
-      <h2 className="text-lg font-black">Suscribirme a actualizaciones</h2>
-      <p className="text-sm text-slate-600">
-        Recibe correo cuando haya novedades verificadas sobre esta ficha.
-      </p>
-      {state.message ? (
-        <p
-          className={`rounded-2xl p-3 text-sm ${state.ok ? "bg-cerca-50 text-cerca-900" : "bg-red-50 text-red-700"}`}
-        >
-          {state.message}
-        </p>
-      ) : null}
-      <div>
-        <label>Tu nombre</label>
-        <input name="subscriber_name" placeholder="Opcional" />
-      </div>
-      <div>
-        <label>Tu email *</label>
-        <input name="email" type="email" required />
-      </div>
-      <SubmitButton>Enviar código</SubmitButton>
-    </form>
-  );
-}
-
 export function FoundRecordActions({ foundRecordId }: FoundRecordActionsProps) {
   return (
     <div className="grid gap-4">
@@ -201,7 +94,11 @@ export function FoundRecordActions({ foundRecordId }: FoundRecordActionsProps) {
         description="Envía datos de contacto e información concreta. El aviso queda privado y pendiente de revisión."
         submitLabel="Enviar información"
       />
-      <FoundSubscriptionForm foundRecordId={foundRecordId} />
+      <SubscribeForm
+        subjectType="found_record"
+        subjectId={foundRecordId}
+        title="Suscribirme a esta ficha"
+      />
       <FoundReportForm
         foundRecordId={foundRecordId}
         reportType="correction"

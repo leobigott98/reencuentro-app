@@ -128,33 +128,107 @@ async function notifyDocumentMatch(
     `Posible coincidencia encontrada: ${missing.full_name}`,
     html,
   );
-  await notifyCaseSubscribers(
+  await notifySubscribers(
+    "missing_case",
     missing.id,
     `Posible coincidencia para ${missing.full_name}`,
     html,
   );
+  await notifySubscribers(
+    "found_record",
+    found.id,
+    `Posible coincidencia para ${foundName}`,
+    html,
+  );
   return true;
 }
+export type SubscriptionSubjectType = "missing_case" | "found_record" | "upload_batch";
+
+export type GenericSubscriptionRequestState = {
+  ok: boolean;
+  message: string;
+  subjectType?: SubscriptionSubjectType;
+  subjectId?: string;
+  email?: string;
+};
+
+export type GenericSubscriptionConfirmState = {
+  ok: boolean;
+  message: string;
+};
+
+type SubscriberRow = {
+  email: string;
+  unsubscribe_token: string | null;
+};
+
+function subscriptionFooter(
+  subjectType: SubscriptionSubjectType,
+  subjectId: string,
+  token: string | null,
+) {
+  const unsubscribeLink = token
+    ? `<a href="${baseUrl()}/desuscribir?token=${encodeURIComponent(token)}&subject_type=${encodeURIComponent(subjectType)}&subject_id=${encodeURIComponent(subjectId)}">Cancelar suscripción</a>`
+    : "Cancelar suscripción no disponible";
+
+  return `<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0" /><p style="font-size:12px;color:#64748b">Recibes este correo porque te suscribiste a actualizaciones en CERCA Reencuentro. ${unsubscribeLink}</p>`;
+}
+
+export async function notifySubscribers(
+  subjectType: SubscriptionSubjectType,
+  subjectId: string,
+  subject: string,
+  html: string,
+) {
+  const db = supabaseAdmin();
+  const sent = new Set<string>();
+  const { data } = await db
+    .from("generic_subscriptions")
+    .select("email, unsubscribe_token")
+    .eq("subject_type", subjectType)
+    .eq("subject_id", subjectId)
+    .eq("status", "confirmed");
+
+  const genericSubs = (data || []) as SubscriberRow[];
+  for (const sub of genericSubs) {
+    const email = normalizeEmail(sub.email);
+    if (!email || sent.has(email)) continue;
+    sent.add(email);
+    await sendEmail({
+      to: [email],
+      subject,
+      html: `${html}${subscriptionFooter(subjectType, subjectId, sub.unsubscribe_token)}`,
+    });
+  }
+
+  if (subjectType !== "missing_case") return;
+
+  const { data: legacyData } = await db
+    .from("case_subscriptions")
+    .select("email, unsubscribe_token")
+    .eq("person_id", subjectId)
+    .eq("status", "confirmed");
+
+  const legacySubs = (legacyData || []) as SubscriberRow[];
+  for (const sub of legacySubs) {
+    const email = normalizeEmail(sub.email);
+    if (!email || sent.has(email)) continue;
+    sent.add(email);
+    await sendEmail({
+      to: [email],
+      subject,
+      html: `${html}${subscriptionFooter("missing_case", subjectId, sub.unsubscribe_token)}`,
+    });
+  }
+}
+
 async function notifyCaseSubscribers(
   personId: string,
   subject: string,
   html: string,
 ) {
-  const db = supabaseAdmin();
-  const { data } = await db
-    .from("case_subscriptions")
-    .select("email, unsubscribe_token")
-    .eq("person_id", personId)
-    .eq("status", "confirmed");
-  const subs = data || [];
-  if (!subs.length) return;
-  await sendEmail({
-    to: subs.map((s: any) => s.email),
-    subject,
-    html: `${html}<p style="font-size:12px;color:#64748b">Recibes este correo porque te suscribiste a actualizaciones de este caso.</p>`,
-  });
+  await notifySubscribers("missing_case", personId, subject, html);
 }
-
 async function notifyCaseOwner(
   personId: string,
   subject: string,
@@ -1286,102 +1360,30 @@ export async function submitFoundRecordReport(_: unknown, formData: FormData) {
   };
 }
 
-const foundSubscriptionRequestSchema = z.object({
-  found_record_id: z.string().uuid(),
-  subscriber_name: z.string().max(160).optional(),
-  email: z.string().email(),
-});
-
 export async function requestFoundRecordSubscription(
-  _: unknown,
+  prev: GenericSubscriptionRequestState,
   formData: FormData,
 ) {
-  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
-  const parsed = foundSubscriptionRequestSchema.safeParse(
-    Object.fromEntries(formData),
-  );
-  if (!parsed.success)
-    return { ok: false, message: "Indica un correo válido." };
-  const email = normalizeEmail(parsed.data.email);
-  const db = supabaseAdmin();
-  const { data: found } = await db
-    .from("found_records")
-    .select("id, public_code, full_name")
-    .eq("id", parsed.data.found_record_id)
-    .maybeSingle();
-  if (!found) return { ok: false, message: "No se encontró la ficha." };
-
-  const code = newOtpCode();
-  await db.from("generic_subscriptions").upsert(
-    {
-      subject_type: "found_record",
-      subject_id: found.id,
-      email,
-      subscriber_name: parsed.data.subscriber_name || null,
-      code_hash: hashCode(code),
-      status: "pending",
-      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "subject_type,subject_id,email" },
-  );
-  await sendEmail({
-    to: [email],
-    subject: `Confirma tu suscripción: ${found.full_name || found.public_code}`,
-    html: `<p>Para recibir actualizaciones sobre esta ficha de persona encontrada, confirma con este código:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${code}</p><p>Vence en 15 minutos.</p>`,
-  });
+  const nextFormData = new FormData();
+  formData.forEach((value, key) => nextFormData.append(key, value));
+  nextFormData.set("subject_type", "found_record");
+  nextFormData.set("subject_id", text(formData, "found_record_id"));
+  const state = await requestGenericSubscription(prev, nextFormData);
   return {
-    ok: true,
-    message: "Te enviamos un código para confirmar la suscripción.",
-    foundRecordId: found.id,
-    email,
+    ...state,
+    foundRecordId: state.subjectId,
   };
 }
 
-const foundSubscriptionConfirmSchema = z.object({
-  found_record_id: z.string().uuid(),
-  email: z.string().email(),
-  code: z.string().min(6).max(12),
-});
-
 export async function confirmFoundRecordSubscription(
-  _: unknown,
+  prev: GenericSubscriptionConfirmState,
   formData: FormData,
 ) {
-  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
-  const parsed = foundSubscriptionConfirmSchema.safeParse(
-    Object.fromEntries(formData),
-  );
-  if (!parsed.success) return { ok: false, message: "Revisa el código." };
-  const email = normalizeEmail(parsed.data.email);
-  const db = supabaseAdmin();
-  const { data: sub } = await db
-    .from("generic_subscriptions")
-    .select("id, code_hash, expires_at")
-    .eq("subject_type", "found_record")
-    .eq("subject_id", parsed.data.found_record_id)
-    .eq("email", email)
-    .eq("status", "pending")
-    .maybeSingle();
-  if (
-    !sub ||
-    sub.code_hash !== hashCode(parsed.data.code.replace(/\s+/g, "")) ||
-    new Date(sub.expires_at).getTime() < Date.now()
-  ) {
-    return { ok: false, message: "Código inválido o vencido." };
-  }
-  await db
-    .from("generic_subscriptions")
-    .update({
-      status: "confirmed",
-      confirmed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sub.id);
-  return {
-    ok: true,
-    message: "Suscripción confirmada. Te avisaremos cuando haya actualizaciones.",
-  };
+  const nextFormData = new FormData();
+  formData.forEach((value, key) => nextFormData.append(key, value));
+  nextFormData.set("subject_type", "found_record");
+  nextFormData.set("subject_id", text(formData, "found_record_id"));
+  return confirmGenericSubscription(prev, nextFormData);
 }
 const otpRequestSchema = z.object({ email: z.string().email() });
 
@@ -1611,92 +1613,196 @@ export async function importSurvivorFile(_: unknown, formData: FormData) {
   };
 }
 
-const subscriptionRequestSchema = z.object({
-  person_id: z.string().uuid(),
+const genericSubscriptionSubjectSchema = z.enum([
+  "missing_case",
+  "found_record",
+  "upload_batch",
+]);
+
+const genericSubscriptionRequestSchema = z.object({
+  subject_type: genericSubscriptionSubjectSchema,
+  subject_id: z.string().uuid(),
   subscriber_name: z.string().max(160).optional(),
   email: z.string().email(),
 });
 
-export async function requestCaseSubscription(_: unknown, formData: FormData) {
+const genericSubscriptionConfirmSchema = z.object({
+  subject_type: genericSubscriptionSubjectSchema,
+  subject_id: z.string().uuid(),
+  email: z.string().email(),
+  code: z.string().min(6).max(12),
+});
+
+type SubscriptionSubject = {
+  title: string;
+  publicUrl: string;
+};
+
+async function getSubscriptionSubject(
+  subjectType: SubscriptionSubjectType,
+  subjectId: string,
+): Promise<SubscriptionSubject | null> {
+  const db = supabaseAdmin();
+
+  if (subjectType === "missing_case") {
+    const { data } = await db
+      .from("person_cases")
+      .select("id, full_name, public_code")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      title: String(data.full_name || "caso de desaparición"),
+      publicUrl: `${baseUrl()}/casos/${data.public_code}`,
+    };
+  }
+
+  if (subjectType === "found_record") {
+    const { data } = await db
+      .from("found_records")
+      .select("id, full_name, public_code")
+      .eq("id", subjectId)
+      .neq("status", "discarded")
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      title: String(data.full_name || data.public_code || "persona por identificar"),
+      publicUrl: `${baseUrl()}/encontrados/${data.public_code}`,
+    };
+  }
+
+  const { data } = await db
+    .from("upload_batches")
+    .select("id, source_name")
+    .eq("id", subjectId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    title: String(data.source_name || "lote de personas encontradas"),
+    publicUrl: `${baseUrl()}/encontrados/lotes/${data.id}`,
+  };
+}
+
+export async function requestGenericSubscription(
+  _: GenericSubscriptionRequestState,
+  formData: FormData,
+): Promise<GenericSubscriptionRequestState> {
   if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
-  const parsed = subscriptionRequestSchema.safeParse(
+  const parsed = genericSubscriptionRequestSchema.safeParse(
     Object.fromEntries(formData),
   );
   if (!parsed.success)
     return { ok: false, message: "Indica un correo válido." };
-  const email = normalizeEmail(parsed.data.email);
-  const db = supabaseAdmin();
-  const { data: person } = await db
-    .from("person_cases")
-    .select("id, full_name, public_code")
-    .eq("id", parsed.data.person_id)
-    .maybeSingle();
-  if (!person) return { ok: false, message: "No se encontró el caso." };
+
+  const data = parsed.data;
+  const subject = await getSubscriptionSubject(data.subject_type, data.subject_id);
+  if (!subject) return { ok: false, message: "No se encontró la ficha." };
+
+  const email = normalizeEmail(data.email);
   const code = newOtpCode();
-  await db.from("case_subscriptions").upsert(
+  const db = supabaseAdmin();
+  const { error } = await db.from("generic_subscriptions").upsert(
     {
-      person_id: person.id,
+      subject_type: data.subject_type,
+      subject_id: data.subject_id,
       email,
-      subscriber_name: parsed.data.subscriber_name || null,
+      subscriber_name: data.subscriber_name?.trim() || null,
       code_hash: hashCode(code),
       status: "pending",
       expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "person_id,email" },
+    { onConflict: "subject_type,subject_id,email" },
   );
+
+  if (error) return { ok: false, message: "No se pudo crear la suscripción." };
+
   await sendEmail({
     to: [email],
-    subject: `Confirma tu suscripción: ${person.full_name}`,
-    html: `<p>Para recibir actualizaciones sobre <strong>${person.full_name}</strong>, confirma con este código:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${code}</p><p>Vence en 15 minutos.</p>`,
+    subject: `Confirma tu suscripción: ${subject.title}`,
+    html: `<p>Para recibir actualizaciones sobre <strong>${subject.title}</strong>, confirma con este código:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${code}</p><p>Vence en 15 minutos.</p><p><a href="${subject.publicUrl}">Ver ficha</a></p>`,
   });
+
   return {
     ok: true,
     message: "Te enviamos un código para confirmar la suscripción.",
-    personId: person.id,
+    subjectType: data.subject_type,
+    subjectId: data.subject_id,
     email,
   };
 }
 
-const subscriptionConfirmSchema = z.object({
-  person_id: z.string().uuid(),
-  email: z.string().email(),
-  code: z.string().min(6).max(12),
-});
-
-export async function confirmCaseSubscription(_: unknown, formData: FormData) {
+export async function confirmGenericSubscription(
+  _: GenericSubscriptionConfirmState,
+  formData: FormData,
+): Promise<GenericSubscriptionConfirmState> {
   if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
-  const parsed = subscriptionConfirmSchema.safeParse(
+  const parsed = genericSubscriptionConfirmSchema.safeParse(
     Object.fromEntries(formData),
   );
   if (!parsed.success) return { ok: false, message: "Revisa el código." };
-  const email = normalizeEmail(parsed.data.email);
+
+  const data = parsed.data;
+  const email = normalizeEmail(data.email);
+  const codeHash = hashCode(data.code.replace(/\s+/g, ""));
   const db = supabaseAdmin();
   const { data: sub } = await db
-    .from("case_subscriptions")
+    .from("generic_subscriptions")
     .select("id, code_hash, expires_at")
-    .eq("person_id", parsed.data.person_id)
+    .eq("subject_type", data.subject_type)
+    .eq("subject_id", data.subject_id)
     .eq("email", email)
     .eq("status", "pending")
     .maybeSingle();
+
   if (
     !sub ||
-    sub.code_hash !== hashCode(parsed.data.code.replace(/\s+/g, "")) ||
+    sub.code_hash !== codeHash ||
     new Date(sub.expires_at).getTime() < Date.now()
   ) {
     return { ok: false, message: "Código inválido o vencido." };
   }
-  await db
-    .from("case_subscriptions")
+
+  const { error } = await db
+    .from("generic_subscriptions")
     .update({
       status: "confirmed",
       confirmed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq("id", sub.id);
+
+  if (error) return { ok: false, message: "No se pudo confirmar." };
+
   return {
     ok: true,
     message:
       "Suscripción confirmada. Te avisaremos por correo cuando haya actualizaciones verificadas.",
   };
+}
+
+export async function requestCaseSubscription(
+  prev: GenericSubscriptionRequestState,
+  formData: FormData,
+) {
+  const nextFormData = new FormData();
+  formData.forEach((value, key) => nextFormData.append(key, value));
+  nextFormData.set("subject_type", "missing_case");
+  nextFormData.set("subject_id", text(formData, "person_id"));
+  const state = await requestGenericSubscription(prev, nextFormData);
+  return {
+    ...state,
+    personId: state.subjectId,
+  };
+}
+
+export async function confirmCaseSubscription(
+  prev: GenericSubscriptionConfirmState,
+  formData: FormData,
+) {
+  const nextFormData = new FormData();
+  formData.forEach((value, key) => nextFormData.append(key, value));
+  nextFormData.set("subject_type", "missing_case");
+  nextFormData.set("subject_id", text(formData, "person_id"));
+  return confirmGenericSubscription(prev, nextFormData);
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { SubscribeForm } from "@/components/SubscribeForm";
 import { supabaseAdmin } from "@/lib/supabase";
 import { relativeTime } from "@/lib/time";
 
@@ -89,6 +90,7 @@ export default async function FoundBatchPage({
         <p className="mt-4 text-xs text-slate-500">
           Los datos de contacto del responsable y archivos privados no se muestran públicamente.
         </p>
+        <SubscribeForm subjectType="upload_batch" subjectId={b.id} title="Suscribirme a este lote" />
       </section>
 
       <section className="mt-6">

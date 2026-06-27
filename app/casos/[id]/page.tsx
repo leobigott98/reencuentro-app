@@ -45,7 +45,7 @@ export default async function CasePage({ params, searchParams }: { params: Promi
           <p className="mt-3 text-xs text-slate-500">No se muestran teléfonos públicamente. Toda información enviada será revisada.</p>
           {qs.token ? <OwnerFoundForm publicCode={c.public_code} token={qs.token} /> : null}
         </section>
-        <aside><InfoForm personId={c.id} /><SubscribeForm personId={c.id} /></aside>
+        <aside><InfoForm personId={c.id} /><SubscribeForm subjectType="missing_case" subjectId={c.id} title="Suscribirme a este caso" /></aside>
       </div>
     </main>
   );

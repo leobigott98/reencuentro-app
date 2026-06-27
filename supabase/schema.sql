@@ -527,6 +527,7 @@ create index if not exists idx_aid_resources_kind on aid_resources(kind);
 create index if not exists idx_aid_resources_published on aid_resources(is_published, updated_at desc);
 create index if not exists idx_case_subscriptions_person_id on case_subscriptions(person_id);
 create index if not exists idx_case_subscriptions_email on case_subscriptions(email);
+create index if not exists idx_case_subscriptions_unsubscribe_token on case_subscriptions(unsubscribe_token);
 create index if not exists idx_survivor_records_document_id on survivor_records(document_id);
 create index if not exists idx_survivor_records_document_last4 on survivor_records(document_last4);
 create index if not exists idx_survivor_records_normalized_name on survivor_records(normalized_name);
@@ -548,6 +549,7 @@ create index if not exists idx_found_record_reports_found_record_id on found_rec
 create index if not exists idx_found_record_reports_created_at on found_record_reports(created_at desc);
 create index if not exists idx_generic_subscriptions_subject on generic_subscriptions(subject_type, subject_id);
 create index if not exists idx_generic_subscriptions_email on generic_subscriptions(email);
+create index if not exists idx_generic_subscriptions_unsubscribe_token on generic_subscriptions(unsubscribe_token);
 create index if not exists idx_possible_matches_missing_case_id on possible_matches(missing_case_id);
 create index if not exists idx_possible_matches_found_record_id on possible_matches(found_record_id);
 create index if not exists idx_possible_matches_status on possible_matches(status);

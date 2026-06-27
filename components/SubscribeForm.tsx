@@ -2,46 +2,44 @@
 
 import { useActionState } from "react";
 import {
-  requestCaseSubscription,
-  confirmCaseSubscription,
+  confirmGenericSubscription,
+  requestGenericSubscription,
+  type GenericSubscriptionConfirmState,
+  type GenericSubscriptionRequestState,
+  type SubscriptionSubjectType,
 } from "@/app/actions";
 import { SubmitButton } from "./SubmitButton";
 
-type SubscribeState = {
-  ok: boolean;
-  message: string;
-  personId?: string;
-  email?: string;
+type SubscribeFormProps = {
+  subjectType: SubscriptionSubjectType;
+  subjectId: string;
+  title?: string;
 };
 
-const initial: SubscribeState = {
+const requestInitial: GenericSubscriptionRequestState = {
   ok: false,
   message: "",
-  personId: undefined,
-  email: undefined,
 };
 
-type ConfirmSubscriptionState = {
-  ok: boolean;
-  message: string;
-};
-
-const confirmInitial: ConfirmSubscriptionState = {
+const confirmInitial: GenericSubscriptionConfirmState = {
   ok: false,
   message: "",
 };
 
 function ConfirmSubscription({
-  personId,
+  subjectType,
+  subjectId,
   email,
 }: {
-  personId: string;
+  subjectType: SubscriptionSubjectType;
+  subjectId: string;
   email: string;
 }) {
-  const [state, action] = useActionState<ConfirmSubscriptionState, FormData>(
-    confirmCaseSubscription,
+  const [state, action] = useActionState<GenericSubscriptionConfirmState, FormData>(
+    confirmGenericSubscription,
     confirmInitial,
   );
+
   return (
     <form
       action={action}
@@ -55,7 +53,8 @@ function ConfirmSubscription({
         className="hidden"
         aria-hidden="true"
       />
-      <input type="hidden" name="person_id" value={personId} />
+      <input type="hidden" name="subject_type" value={subjectType} />
+      <input type="hidden" name="subject_id" value={subjectId} />
       <input type="hidden" name="email" value={email} />
       <h2 className="text-lg font-black">Confirma tu suscripción</h2>
       <p className="text-sm text-slate-600">
@@ -84,15 +83,22 @@ function ConfirmSubscription({
   );
 }
 
-export function SubscribeForm({ personId }: { personId: string }) {
-  const [state, action] = useActionState<SubscribeState, FormData>(
-    requestCaseSubscription,
-    initial,
+export function SubscribeForm({ subjectType, subjectId, title }: SubscribeFormProps) {
+  const [state, action] = useActionState<GenericSubscriptionRequestState, FormData>(
+    requestGenericSubscription,
+    requestInitial,
   );
-  if (state.ok && state.personId && state.email)
+
+  if (state.ok && state.subjectType && state.subjectId && state.email) {
     return (
-      <ConfirmSubscription personId={state.personId} email={state.email} />
+      <ConfirmSubscription
+        subjectType={state.subjectType}
+        subjectId={state.subjectId}
+        email={state.email}
+      />
     );
+  }
+
   return (
     <form
       action={action}
@@ -106,11 +112,12 @@ export function SubscribeForm({ personId }: { personId: string }) {
         className="hidden"
         aria-hidden="true"
       />
-      <input type="hidden" name="person_id" value={personId} />
-      <h2 className="text-lg font-black">Suscribirme a este caso</h2>
+      <input type="hidden" name="subject_type" value={subjectType} />
+      <input type="hidden" name="subject_id" value={subjectId} />
+      <h2 className="text-lg font-black">{title || "Suscribirme a actualizaciones"}</h2>
       <p className="text-sm text-slate-600">
-        Si estás pendiente de esta persona, deja tu correo. Te avisaremos cuando
-        haya un cambio de estado o información verificada.
+        Deja tu correo para recibir avisos sobre cambios relevantes, posibles
+        coincidencias o confirmaciones verificadas. No se publicará tu email.
       </p>
       {state.message ? (
         <p
