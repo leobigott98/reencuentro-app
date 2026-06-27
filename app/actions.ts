@@ -1182,6 +1182,9 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
   return {
     ok: true,
     message: `Listado recibido: ${rows.length} fila(s) leída(s), ${inserted.length} insertado(s), ${skippedDuplicates} duplicado(s) omitido(s), ${possibleMatchCount} posible(s) coincidencia(s).`,
+    batchId: batch.id,
+    rowCount: rows.length,
+    insertedCount: inserted.length,
   };
 }
 export async function updateCaseStatus(formData: FormData) {

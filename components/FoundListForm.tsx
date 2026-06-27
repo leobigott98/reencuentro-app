@@ -1,17 +1,37 @@
 "use client";
 
-import { useActionState } from "react";
+import Link from "next/link";
+import { CheckCircle2, Loader2 } from "lucide-react";
+import { useActionState, useEffect, useRef } from "react";
 import { uploadFoundList } from "@/app/actions";
-import { SubmitButton } from "./SubmitButton";
 
-const initial = { ok: false, message: "" };
+type FoundListState = {
+  ok: boolean;
+  message: string;
+  batchId?: string;
+  rowCount?: number;
+  insertedCount?: number;
+};
+
+const initial: FoundListState = { ok: false, message: "" };
 
 const acceptedListTypes = ".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
 
+const uploadAction = uploadFoundList as unknown as (
+  state: FoundListState,
+  formData: FormData,
+) => Promise<FoundListState>;
+
 export function FoundListForm() {
-  const [state, action] = useActionState(uploadFoundList, initial);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [state, action, pending] = useActionState<FoundListState, FormData>(uploadAction, initial);
+
+  useEffect(() => {
+    if (state.ok) formRef.current?.reset();
+  }, [state.ok]);
+
   return (
-    <form action={action} className="space-y-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-6">
+    <form ref={formRef} action={action} className="space-y-4 rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-6">
       <input
         type="text"
         name="website"
@@ -30,14 +50,52 @@ export function FoundListForm() {
             apellidos y nombres, edad, cédula, teléfono, dirección y observaciones.
           </p>
         </div>
-        {state.message ? (
-          <p className={`rounded-2xl p-3 text-sm ${state.ok ? "bg-cerca-50 text-cerca-900" : "bg-red-50 text-red-700"}`}>
-            {state.message}
-          </p>
-        ) : null}
+
+        <div aria-live="polite" className="space-y-3">
+          {pending ? (
+            <div className="rounded-2xl bg-cerca-50 p-4 text-sm text-cerca-950 ring-1 ring-cerca-100">
+              <div className="flex items-start gap-3">
+                <Loader2 className="mt-0.5 h-5 w-5 animate-spin" />
+                <div>
+                  <p className="font-black">Procesando el archivo...</p>
+                  <p className="mt-1 text-cerca-900">
+                    Estamos leyendo filas, guardando el lote y creando registros buscables. Un Excel grande puede tardar un poco; no cierres esta página.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {state.message ? (
+            <div className={`rounded-2xl p-4 text-sm ${state.ok ? "bg-emerald-50 text-emerald-950 ring-1 ring-emerald-100" : "bg-red-50 text-red-700 ring-1 ring-red-100"}`}>
+              {state.ok ? (
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-700" />
+                  <div>
+                    <p className="font-black">Listado cargado correctamente</p>
+                    <p className="mt-1">{state.message}</p>
+                    {state.batchId ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Link href={`/encontrados/lotes/${state.batchId}`} className="rounded-2xl bg-emerald-700 px-4 py-2 font-black text-white">
+                          Ver lote cargado
+                        </Link>
+                        <Link href="/buscar?tab=encontradas" className="rounded-2xl bg-white px-4 py-2 font-black text-emerald-900 ring-1 ring-emerald-200">
+                          Buscar registros
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <p>{state.message}</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+
         <div>
           <label>Archivo Excel/CSV</label>
-          <input name="list_file" type="file" accept={acceptedListTypes} />
+          <input name="list_file" type="file" accept={acceptedListTypes} disabled={pending} />
           <p className="mt-1 text-xs text-slate-500">
             Si el archivo tiene una hoja maestra de búsqueda, se usa esa hoja para evitar duplicados por hospital.
           </p>
@@ -47,6 +105,7 @@ export function FoundListForm() {
           <textarea
             name="rows_text"
             rows={7}
+            disabled={pending}
             placeholder={
               "APELLIDOS Y NOMBRES, EDAD, CÉDULA / ID, TELÉFONO, DIRECCIÓN, OBSERVACIONES\nAna Pérez,32,V12345678,0412...,Hospital X,En observación"
             }
@@ -66,31 +125,42 @@ export function FoundListForm() {
         </div>
         <div>
           <label>Fuente / institución *</label>
-          <input name="source_name" required placeholder="Ej. Hospital Domingo Luciani" />
+          <input name="source_name" required disabled={pending} placeholder="Ej. Hospital Domingo Luciani" />
         </div>
         <div>
           <label>Ubicación general *</label>
-          <input name="source_location" required placeholder="Ciudad, parroquia o centro" />
+          <input name="source_location" required disabled={pending} placeholder="Ciudad, parroquia o centro" />
         </div>
         <div>
           <label>Responsable *</label>
-          <input name="uploader_name" required placeholder="Nombre de quien carga" />
+          <input name="uploader_name" required disabled={pending} placeholder="Nombre de quien carga" />
         </div>
         <div>
           <label>Teléfono/WhatsApp *</label>
-          <input name="uploader_phone" required inputMode="tel" />
+          <input name="uploader_phone" required disabled={pending} inputMode="tel" />
         </div>
         <div>
           <label>Email</label>
-          <input name="uploader_email" type="email" />
+          <input name="uploader_email" type="email" disabled={pending} />
         </div>
         <div>
           <label>Evidencia privada</label>
-          <input name="evidence_file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
+          <input name="evidence_file" type="file" disabled={pending} accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
         </div>
       </section>
 
-      <SubmitButton>Cargar y publicar búsqueda</SubmitButton>
+      <button disabled={pending} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-cerca-600 px-5 py-3 font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-70">
+        {pending ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Procesando listado...
+          </>
+        ) : state.ok ? (
+          "Cargar otro listado"
+        ) : (
+          "Cargar y publicar búsqueda"
+        )}
+      </button>
     </form>
   );
 }
