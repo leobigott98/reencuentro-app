@@ -20,9 +20,10 @@ import {
   newOwnerToken,
   tokenHash,
   uploadPrivateEvidence,
+  uploadPrivateFile,
   uploadPublicCasePhoto,
 } from "@/lib/uploads";
-import { parseFoundCsv } from "@/lib/csv";
+import { isSpreadsheetFile, parseFoundCsv, parseFoundWorkbook } from "@/lib/csv";
 import { parseSurvivorWorkbook } from "@/lib/survivor-import";
 
 const baseUrl = () =>
@@ -99,7 +100,7 @@ async function notifyDocumentMatch(
   found: FoundRecordForMatch,
   documentId: string,
 ) {
-  if (!documentId) return;
+  if (!documentId) return false;
   const db = supabaseAdmin();
   const { data: missing } = await db
     .from("person_cases")
@@ -108,7 +109,7 @@ async function notifyDocumentMatch(
     .eq("status", "missing")
     .maybeSingle();
 
-  if (!missing) return;
+  if (!missing) return false;
 
   await db.from("possible_matches").insert({
     missing_case_id: missing.id,
@@ -132,8 +133,8 @@ async function notifyDocumentMatch(
     `Posible coincidencia para ${missing.full_name}`,
     html,
   );
+  return true;
 }
-
 async function notifyCaseSubscribers(
   personId: string,
   subject: string,
@@ -826,6 +827,7 @@ const foundListSchema = z.object({
   uploader_phone: z.string().min(6).max(80),
   uploader_email: z.string().email().optional().or(z.literal("")),
   source_name: z.string().min(2).max(160),
+  source_location: z.string().min(2).max(180),
   rows_text: z.string().max(20000).optional(),
 });
 
@@ -836,24 +838,55 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
   if (!parsed.success)
     return {
       ok: false,
-      message: "Revisa los datos del responsable del listado.",
+      message: "Revisa los datos del responsable, fuente y ubicación.",
     };
   const data = parsed.data;
+  const uploadedList = file(formData, "list_file") || file(formData, "csv_file");
+  const evidenceFile = file(formData, "evidence_file");
+  const rows = [...parseFoundCsv(data.rows_text || "")];
 
-  let raw = data.rows_text || "";
-  const csv = file(formData, "csv_file");
-  if (csv && csv.size > 0) {
-    if (csv.size > 1024 * 1024)
-      return { ok: false, message: "El CSV es demasiado grande. Máximo 1 MB." };
-    raw += "\n" + (await csv.text());
+  if (uploadedList) {
+    try {
+      const buffer = Buffer.from(await uploadedList.arrayBuffer());
+      if (isSpreadsheetFile(uploadedList.name, uploadedList.type)) {
+        rows.push(...parseFoundWorkbook(buffer, uploadedList.name));
+      } else {
+        rows.push(...parseFoundCsv(buffer.toString("utf8")));
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? `No se pudo leer el archivo: ${error.message}`
+            : "No se pudo leer el archivo.",
+      };
+    }
   }
 
-  const rows = parseFoundCsv(raw);
   if (!rows.length) {
     return {
       ok: false,
       message:
-        "No encontré filas válidas. Usa columnas: nombre, edad, ubicacion, notas.",
+        "No encontré filas válidas. Incluye ubicación o centro/refugio por cada fila.",
+    };
+  }
+
+  let originalFilePath: string | null = null;
+  let evidencePath: string | null = null;
+  try {
+    originalFilePath = await uploadPrivateFile(
+      uploadedList,
+      "uploads/original-lists",
+    );
+    evidencePath = await uploadPrivateEvidence(evidenceFile, "found-list-evidence");
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "No se pudieron guardar los archivos del lote.",
     };
   }
 
@@ -869,6 +902,9 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
       uploaded_by_name: data.uploader_name.trim(),
       uploaded_by_phone: data.uploader_phone.trim(),
       source_name: data.source_name.trim(),
+      source_location: data.source_location.trim(),
+      original_file_path: originalFilePath,
+      evidence_file_path: evidencePath,
       row_count: 0,
       created_at: now,
     })
@@ -880,12 +916,28 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
   }
 
   const inserted: FoundRecordForMatch[] = [];
+  let skippedDuplicates = 0;
+  let possibleMatchCount = 0;
 
   for (const row of rows) {
     const rowDoc = normalizeDocumentId(row.document_id || "");
-    const fullName = row.full_name.trim();
+    if (rowDoc) {
+      const { data: existingFound } = await db
+        .from("found_records")
+        .select("id")
+        .eq("document_id", rowDoc)
+        .neq("status", "discarded")
+        .maybeSingle();
+      if (existingFound) {
+        skippedDuplicates += 1;
+        continue;
+      }
+    }
+
+    const fullName = row.full_name?.trim() || null;
     const status = fullName ? "partially_identified" : "unidentified";
-    const sensitivityLevel = foundSensitivityLevel(status, fullName || null, null);
+    const sensitivityLevel = foundSensitivityLevel(status, fullName, null);
+    const notesPrivate = row.source_sheet ? `Hoja: ${row.source_sheet}` : null;
     const public_code = crypto.randomUUID().slice(0, 8);
     const { data: found, error } = await db
       .from("found_records")
@@ -896,15 +948,17 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
         created_by_name: data.uploader_name.trim(),
         created_by_phone: data.uploader_phone.trim(),
         source_name: data.source_name.trim(),
-        full_name: fullName || null,
+        full_name: fullName,
         normalized_name: normalizeNameForSearch(fullName),
         document_id: rowDoc || null,
         document_last4: documentLast4(rowDoc),
         approximate_age: row.approximate_age ?? null,
+        evidence_file_path: evidencePath,
         status,
         sensitivity_level: sensitivityLevel,
         current_location: row.current_location,
-        notes_public: row.notes || null,
+        notes_public: row.notes_public,
+        notes_private: notesPrivate,
         created_at: now,
         updated_at: now,
       })
@@ -921,11 +975,17 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
         source_name: data.source_name.trim(),
         report_type: "found_upload",
         location: row.current_location,
-        notes: row.notes || `Listado cargado por ${data.source_name}`,
+        notes:
+          row.notes_public ||
+          notesPrivate ||
+          `Listado cargado por ${data.source_name}`,
+        evidence_file_path: evidencePath,
         verification_status: "pending",
         visibility: "private",
       });
-      await notifyDocumentMatch(found as FoundRecordForMatch, rowDoc);
+      if (await notifyDocumentMatch(found as FoundRecordForMatch, rowDoc)) {
+        possibleMatchCount += 1;
+      }
     }
   }
 
@@ -939,15 +999,16 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
     await sendEmail({
       to: admins,
       subject: `Nuevo listado de encontrados (${inserted.length})`,
-      html: `<p>${data.uploader_name} cargó ${inserted.length} registros de personas encontradas.</p><p>Fuente: ${data.source_name}</p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+      html: `<p>${data.uploader_name} cargó ${inserted.length} registros de personas encontradas.</p><p>Fuente: ${data.source_name}</p><p>Ubicación/fuente: ${data.source_location}</p><p>Duplicados omitidos: ${skippedDuplicates}</p><p>Posibles coincidencias: ${possibleMatchCount}</p><p><a href="${baseUrl()}/encontrados/lotes/${batch.id}">Ver lote</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
     });
   }
 
   revalidatePath("/");
   revalidatePath("/voluntario");
+  revalidatePath(`/encontrados/lotes/${batch.id}`);
   return {
     ok: true,
-    message: `Listado recibido: ${inserted.length} persona(s) cargadas en encontrados.`,
+    message: `Listado recibido: ${inserted.length} insertado(s), ${skippedDuplicates} duplicado(s) omitido(s), ${possibleMatchCount} posible(s) coincidencia(s).`,
   };
 }
 export async function updateCaseStatus(formData: FormData) {

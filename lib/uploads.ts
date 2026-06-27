@@ -4,7 +4,21 @@ import { supabaseAdmin } from "@/lib/supabase";
 const PUBLIC_BUCKET = process.env.SUPABASE_PUBLIC_PHOTOS_BUCKET || "case-photos";
 const PRIVATE_BUCKET = process.env.SUPABASE_PRIVATE_EVIDENCE_BUCKET || "private-evidence";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+const MAX_PRIVATE_FILE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+]);
+const ALLOWED_PRIVATE_FILE_TYPES = new Set([
+  ...ALLOWED_IMAGE_TYPES,
+  "text/csv",
+  "application/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
 
 function safeExt(file: File) {
   const fallback = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
@@ -51,6 +65,35 @@ export async function uploadPrivateEvidence(file: File | null | undefined, folde
     upsert: false
   });
   if (error) throw new Error(`No se pudo subir la evidencia: ${error.message}`);
+  return path;
+}
+
+export async function uploadPrivateFile(file: File | null | undefined, folder = "uploads") {
+  if (!file || file.size === 0) return null;
+  const lowerName = file.name.toLowerCase();
+  let type = file.type || "application/octet-stream";
+  if (!file.type || type === "application/octet-stream") {
+    if (lowerName.endsWith(".csv")) type = "text/csv";
+    if (lowerName.endsWith(".xls")) type = "application/vnd.ms-excel";
+    if (lowerName.endsWith(".xlsx")) {
+      type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    }
+  }
+  if (!ALLOWED_PRIVATE_FILE_TYPES.has(type)) {
+    throw new Error("Formato de archivo inválido. Usa CSV, XLS, XLSX o imagen.");
+  }
+  if (file.size > MAX_PRIVATE_FILE_BYTES) {
+    throw new Error("El archivo es demasiado grande. Máximo 5 MB.");
+  }
+
+  const db = supabaseAdmin();
+  const path = `${folder}/${crypto.randomUUID()}.${safeExt(file)}`;
+  const arrayBuffer = await file.arrayBuffer();
+  const { error } = await db.storage.from(PRIVATE_BUCKET).upload(path, Buffer.from(arrayBuffer), {
+    contentType: type,
+    upsert: false,
+  });
+  if (error) throw new Error(`No se pudo subir el archivo: ${error.message}`);
   return path;
 }
 

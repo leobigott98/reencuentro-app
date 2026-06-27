@@ -266,8 +266,9 @@ export default async function VolunteerDashboardPage() {
                 </p>
               ) : null}
               {batches.map((batch) => (
-                <article
+                <Link
                   key={batch.id}
+                  href={`/encontrados/lotes/${batch.id}`}
                   className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-200"
                 >
                   <p className="text-xs font-black uppercase text-cerca-700">
@@ -283,7 +284,7 @@ export default async function VolunteerDashboardPage() {
                     {batch.row_count || 0}
                   </p>
                   <p className="text-xs font-bold text-slate-500">filas</p>
-                </article>
+                </Link>
               ))}
             </div>
           </section>

@@ -343,8 +343,8 @@ values ('case-photos','case-photos',true,5242880,array['image/jpeg','image/png',
 on conflict (id) do update set public = true, file_size_limit = 5242880;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('private-evidence','private-evidence',false,5242880,array['image/jpeg','image/png','image/webp','image/heic','image/heif'])
-on conflict (id) do update set public = false, file_size_limit = 5242880;
+values ('private-evidence','private-evidence',false,5242880,array['image/jpeg','image/png','image/webp','image/heic','image/heif','text/csv','application/csv','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'])
+on conflict (id) do update set public = false, file_size_limit = 5242880, allowed_mime_types = array['image/jpeg','image/png','image/webp','image/heic','image/heif','text/csv','application/csv','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
 
 drop view if exists public_upload_batches;
 drop view if exists public_found_records;
