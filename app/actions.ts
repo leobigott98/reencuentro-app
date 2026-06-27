@@ -11,7 +11,7 @@ import {
   isAdmin,
   newOtpCode,
   normalizeEmail,
-  roleForEmail,
+  isAdminEmail,
   setSession,
 } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -299,7 +299,7 @@ export async function confirmMissingReportOtp(_: unknown, formData: FormData) {
     html: `<p>Gracias por confirmar tu correo.</p><p>Ficha pública: <a href="${publicUrl}">${publicUrl}</a></p><p>Enlace privado de gestión: <a href="${manageUrl}">${manageUrl}</a></p><p>También puedes entrar a tu panel con OTP desde <a href="${baseUrl()}/mi-cuenta">Mis reportes</a>.</p>`,
   });
 
-  await setSession(email);
+  await setSession(email, { allowPublicFallback: true });
   revalidatePath("/");
   redirect(`/casos/${person.public_code}?creado=1&token=${ownerToken}`);
 }
@@ -893,14 +893,20 @@ export async function requestLoginOtp(_: unknown, formData: FormData) {
     return { ok: false, message: "Indica un correo válido." };
   const email = normalizeEmail(parsed.data.email);
   const db = supabaseAdmin();
-  const role = roleForEmail(email);
-  let allowed = role === "admin";
+  let allowed = isAdminEmail(email);
   if (!allowed) {
-    const { count } = await db
+    const { count: volunteerCount } = await db
+      .from("volunteer_profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("email", email);
+    allowed = Boolean(volunteerCount && volunteerCount > 0);
+  }
+  if (!allowed) {
+    const { count: caseCount } = await db
       .from("person_cases")
       .select("id", { count: "exact", head: true })
       .eq("owner_email", email);
-    allowed = Boolean(count && count > 0);
+    allowed = Boolean(caseCount && caseCount > 0);
   }
 
   // Respuesta genérica para no revelar si el correo tiene reportes.
@@ -908,7 +914,7 @@ export async function requestLoginOtp(_: unknown, formData: FormData) {
     return {
       ok: true,
       message:
-        "Si el correo tiene reportes o acceso admin, enviaremos un código de acceso.",
+        "Si el correo tiene reportes o acceso autorizado, enviaremos un código de acceso.",
     };
 
   const code = newOtpCode();
@@ -960,8 +966,8 @@ export async function verifyLoginOtp(_: unknown, formData: FormData) {
     .from("otp_codes")
     .update({ used_at: new Date().toISOString() })
     .eq("id", otp.id);
-  await setSession(email);
-  redirect(roleForEmail(email) === "admin" ? "/admin" : "/mi-cuenta");
+  const session = await setSession(email);
+  redirect(session.role === "admin" ? "/admin" : "/mi-cuenta");
 }
 
 export async function logout() {
