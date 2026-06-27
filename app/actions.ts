@@ -304,6 +304,143 @@ export async function confirmMissingReportOtp(_: unknown, formData: FormData) {
   redirect(`/casos/${person.public_code}?creado=1&token=${ownerToken}`);
 }
 
+
+const volunteerRegistrationSchema = z.object({
+  full_name: z.string().min(3).max(160),
+  email: z.string().email(),
+  phone: z.string().min(6).max(80),
+  zone: z.string().min(2).max(160),
+  organization_name: z.string().max(160).optional(),
+  center_name: z.string().max(160).optional(),
+  type_of_help: z.string().max(800).optional(),
+});
+
+export async function requestVolunteerRegistrationOtp(
+  _: unknown,
+  formData: FormData,
+) {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
+  const parsed = volunteerRegistrationSchema.safeParse(
+    Object.fromEntries(formData),
+  );
+  if (!parsed.success) {
+    return { ok: false, message: "Revisa los datos obligatorios." };
+  }
+
+  const data = parsed.data;
+  const email = normalizeEmail(data.email);
+  const code = newOtpCode();
+  const db = supabaseAdmin();
+
+  const { error } = await db.from("report_drafts").insert({
+    email,
+    code_hash: hashCode(code),
+    payload: {
+      kind: "volunteer_registration",
+      full_name: data.full_name.trim(),
+      email,
+      phone: data.phone.trim(),
+      zone: data.zone.trim(),
+      organization_name: data.organization_name?.trim() || null,
+      center_name: data.center_name?.trim() || null,
+      type_of_help: data.type_of_help?.trim() || null,
+    },
+    expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  });
+
+  if (error) {
+    return { ok: false, message: "No se pudo preparar la confirmación." };
+  }
+
+  await sendEmail({
+    to: [email],
+    subject: "Confirma tu registro voluntario en CERCA Reencuentro",
+    html: `<p>Recibimos tu solicitud para registrarte como voluntario/a.</p><p>Confirma tu correo con este código:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${code}</p><p>Vence en 15 minutos. No lo compartas.</p>`,
+  });
+
+  redirect(`/voluntarios/confirmar?email=${encodeURIComponent(email)}`);
+}
+
+const confirmVolunteerRegistrationSchema = z.object({
+  email: z.string().email(),
+  code: z.string().min(6).max(12),
+});
+
+export async function confirmVolunteerRegistrationOtp(
+  _: unknown,
+  formData: FormData,
+) {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
+  const parsed = confirmVolunteerRegistrationSchema.safeParse(
+    Object.fromEntries(formData),
+  );
+  if (!parsed.success) {
+    return { ok: false, message: "Revisa el correo y el código." };
+  }
+
+  const email = normalizeEmail(parsed.data.email);
+  const codeHash = hashCode(parsed.data.code.replace(/\s+/g, ""));
+  const db = supabaseAdmin();
+  const { data: drafts } = await db
+    .from("report_drafts")
+    .select("id, code_hash, payload, expires_at, confirmed_at")
+    .eq("email", email)
+    .is("confirmed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  const draft = (drafts || []).find(
+    (item: any) => item?.payload?.kind === "volunteer_registration",
+  ) as any;
+
+  if (
+    !draft ||
+    draft.code_hash !== codeHash ||
+    new Date(draft.expires_at).getTime() < Date.now()
+  ) {
+    return { ok: false, message: "Código inválido o vencido." };
+  }
+
+  const payload = draft.payload as any;
+  const { error } = await db.from("volunteer_profiles").upsert(
+    {
+      email,
+      full_name: String(payload.full_name || "").trim(),
+      phone: String(payload.phone || "").trim(),
+      zone: String(payload.zone || "").trim(),
+      organization_name: payload.organization_name || null,
+      center_name: payload.center_name || null,
+      role: "volunteer",
+      verification_status: "self_registered",
+      trust_score: 0,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "email" },
+  );
+
+  if (error) {
+    return { ok: false, message: "No se pudo crear el perfil voluntario." };
+  }
+
+  await db
+    .from("report_drafts")
+    .update({ confirmed_at: new Date().toISOString() })
+    .eq("id", draft.id);
+
+  if (payload.type_of_help) {
+    await db.from("trust_events").insert({
+      actor_email: email,
+      event_type: "volunteer_self_registered",
+      points: 0,
+      notes: `type_of_help: ${payload.type_of_help}`,
+    });
+  }
+
+  await setSession(email);
+  revalidatePath("/voluntario");
+  redirect("/voluntario");
+}
+
 const infoSchema = z.object({
   person_id: z.string().uuid(),
   info_name: z.string().min(3).max(160),
