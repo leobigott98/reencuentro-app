@@ -1108,7 +1108,7 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
     const fullName = row.full_name?.trim() || null;
     const status = fullName ? "partially_identified" : "unidentified";
     const sensitivityLevel = foundSensitivityLevel(status, fullName, null);
-    const notesPrivate = row.source_sheet ? `Hoja: ${row.source_sheet}` : null;
+    const notesPrivate = row.notes_private || null;
     const public_code = crypto.randomUUID().slice(0, 8);
     const { data: found, error } = await db
       .from("found_records")
@@ -1128,6 +1128,7 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
         status,
         sensitivity_level: sensitivityLevel,
         current_location: row.current_location,
+        found_location: row.found_location,
         notes_public: row.notes_public,
         notes_private: notesPrivate,
         created_at: now,
@@ -1147,9 +1148,9 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
         report_type: "found_upload",
         location: row.current_location,
         notes:
-          row.notes_public ||
-          notesPrivate ||
-          `Listado cargado por ${data.source_name}`,
+          [row.notes_public, notesPrivate, `Listado cargado por ${data.source_name}`]
+            .filter(Boolean)
+            .join("\n"),
         evidence_file_path: evidencePath,
         verification_status: "pending",
         visibility: "private",
@@ -1161,24 +1162,26 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
 
   await db
     .from("upload_batches")
-    .update({ row_count: inserted.length })
+    .update({ row_count: rows.length })
     .eq("id", batch.id);
 
   const admins = adminEmails();
   if (admins.length) {
     await sendEmail({
       to: admins,
-      subject: `Nuevo listado de encontrados (${inserted.length})`,
-      html: `<p>${data.uploader_name} cargó ${inserted.length} registros de personas encontradas.</p><p>Fuente: ${data.source_name}</p><p>Ubicación/fuente: ${data.source_location}</p><p>Duplicados omitidos: ${skippedDuplicates}</p><p>Posibles coincidencias: ${possibleMatchCount}</p><p><a href="${baseUrl()}/encontrados/lotes/${batch.id}">Ver lote</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+      subject: `Nuevo listado de encontrados (${inserted.length}/${rows.length})`,
+      html: `<p>${data.uploader_name} cargó ${inserted.length} registros de ${rows.length} filas leídas.</p><p>Fuente: ${data.source_name}</p><p>Ubicación/fuente: ${data.source_location}</p><p>Duplicados omitidos: ${skippedDuplicates}</p><p>Posibles coincidencias: ${possibleMatchCount}</p><p><a href="${baseUrl()}/encontrados/lotes/${batch.id}">Ver lote</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
     });
   }
 
   revalidatePath("/");
+  revalidatePath("/buscar");
   revalidatePath("/voluntario");
+  revalidatePath("/encontrados/listas");
   revalidatePath(`/encontrados/lotes/${batch.id}`);
   return {
     ok: true,
-    message: `Listado recibido: ${inserted.length} insertado(s), ${skippedDuplicates} duplicado(s) omitido(s), ${possibleMatchCount} posible(s) coincidencia(s).`,
+    message: `Listado recibido: ${rows.length} fila(s) leída(s), ${inserted.length} insertado(s), ${skippedDuplicates} duplicado(s) omitido(s), ${possibleMatchCount} posible(s) coincidencia(s).`,
   };
 }
 export async function updateCaseStatus(formData: FormData) {
@@ -1388,7 +1391,9 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
   }
 
   revalidatePath("/");
+  revalidatePath("/buscar");
   revalidatePath("/voluntario");
+  revalidatePath("/encontrados/listas");
   revalidatePath(`/encontrados/${found.public_code}`);
   redirect(`/encontrados/${found.public_code}`);
 }

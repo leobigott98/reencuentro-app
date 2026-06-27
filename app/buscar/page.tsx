@@ -29,6 +29,7 @@ type FoundRecordRow = {
   found_location: string | null;
   current_location: string | null;
   source_name: string | null;
+  notes_public: string | null;
   created_by_name: string | null;
   found_at: string | null;
   updated_at: string | null;
@@ -181,16 +182,16 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   const [{ data: foundRows }, { data: missingRows }] = await Promise.all([
     db
       .from("found_records")
-      .select("id, public_code, full_name, document_id, document_last4, approximate_age, photo_url, status, sensitivity_level, found_location, current_location, source_name, created_by_name, found_at, updated_at, created_at")
+      .select("id, public_code, full_name, document_id, document_last4, approximate_age, photo_url, status, sensitivity_level, found_location, current_location, source_name, notes_public, created_by_name, found_at, updated_at, created_at")
       .neq("status", "discarded")
       .order("updated_at", { ascending: false })
-      .limit(200),
+      .range(0, 4999),
     db
       .from("person_cases")
       .select("id, public_code, full_name, document_id, document_last4, approximate_age, photo_url, status, last_seen_location, current_location, updated_at, created_at")
       .not("status", "in", "(discarded,duplicate)")
       .order("updated_at", { ascending: false })
-      .limit(200),
+      .range(0, 1999),
   ]);
 
   const foundResults = ((foundRows || []) as FoundRecordRow[])
@@ -200,11 +201,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
       location
         ? matchesText(row.current_location, location) ||
           matchesText(row.found_location, location) ||
-          matchesText(row.source_name, location)
+          matchesText(row.source_name, location) ||
+          matchesText(row.notes_public, location)
         : true,
     )
     .filter((row) => (status ? row.status === status : true))
-    .slice(0, 60)
     .map(foundToResult);
 
   const missingResults = ((missingRows || []) as MissingCaseRow[])
@@ -217,7 +218,6 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
         : true,
     )
     .filter((row) => (status ? row.status === status : true))
-    .slice(0, 60)
     .map(missingToResult);
 
   const activeResults = tab === "encontradas" ? foundResults : missingResults;
