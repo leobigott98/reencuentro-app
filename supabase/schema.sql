@@ -262,6 +262,29 @@ create table if not exists found_records (
   updated_at timestamptz default now()
 );
 
+alter table found_records drop constraint if exists found_records_status_check;
+alter table found_records add constraint found_records_status_check check (status in (
+  'unidentified',
+  'partially_identified',
+  'identity_probable',
+  'identity_confirmed_by_family',
+  'identity_confirmed_by_center',
+  'safe',
+  'hospitalized',
+  'transferred',
+  'deceased_unidentified',
+  'deceased_identity_probable',
+  'deceased_identity_confirmed',
+  'family_notified',
+  'released_to_family',
+  'minor_unaccompanied',
+  'minor_temporary_care',
+  'reunification_in_progress',
+  'reunified',
+  'restricted',
+  'discarded'
+)) not valid;
+
 create table if not exists found_record_reports (
   id uuid primary key default gen_random_uuid(),
   found_record_id uuid references found_records(id) on delete cascade,
@@ -393,7 +416,14 @@ select
     (select count(*) from person_cases where status::text = 'reunified') +
     (select count(*) from found_records where status in ('reunified','released_to_family'))
   )::int as reunified_count,
-  (select count(*) from found_records where status = 'deceased_unidentified')::int as deceased_unidentified_count;
+  (select count(*) from found_records where status = 'deceased_unidentified')::int as deceased_unidentified_count,
+  (select count(*) from person_cases where status::text not in ('discarded','duplicate'))::int as total_cases,
+  (select count(*) from person_cases where status::text = 'missing')::int as still_missing,
+  (
+    (select count(*) from person_cases where status::text in ('located','safe','hospitalized','found_alive','reunified')) +
+    (select count(*) from found_records where status in ('safe','hospitalized','reunified','released_to_family'))
+  )::int as found_or_reunified,
+  (select count(*) from person_cases where status::text in ('possibly_found','verifying_location','possible_match','reviewing_match'))::int as in_verification;
 
 create view public_upload_batches as
 select
