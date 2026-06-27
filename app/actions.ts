@@ -52,6 +52,88 @@ function documentLast4(value: string | null) {
   return digits.length >= 4 ? digits.slice(-4) : null;
 }
 
+function normalizeNameForSearch(value: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9Ñ\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function optionalIsoDateTime(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function foundSensitivityLevel(
+  status: string,
+  fullName: string | null,
+  photoUrl: string | null,
+) {
+  if (
+    status.includes("minor") ||
+    status.includes("deceased") ||
+    !fullName ||
+    (photoUrl && status.includes("deceased"))
+  ) {
+    return "high_risk";
+  }
+  if (status === "unidentified" || status === "partially_identified") {
+    return "restricted";
+  }
+  return "normal";
+}
+
+type FoundRecordForMatch = {
+  id: string;
+  public_code: string;
+  full_name: string | null;
+  current_location: string | null;
+  source_name: string | null;
+};
+
+async function notifyDocumentMatch(
+  found: FoundRecordForMatch,
+  documentId: string,
+) {
+  if (!documentId) return;
+  const db = supabaseAdmin();
+  const { data: missing } = await db
+    .from("person_cases")
+    .select("id, public_code, full_name")
+    .eq("document_id", documentId)
+    .eq("status", "missing")
+    .maybeSingle();
+
+  if (!missing) return;
+
+  await db.from("possible_matches").insert({
+    missing_case_id: missing.id,
+    found_record_id: found.id,
+    match_type: "document_id",
+    score: 1.0,
+    status: "pending",
+    notified_at: new Date().toISOString(),
+  });
+
+  const foundName = found.full_name || "persona sin identificar";
+  const html = `<p>Se cargó una ficha de persona encontrada que coincide por documento con <strong>${missing.full_name}</strong>.</p><p><strong>Registro encontrado:</strong> ${foundName}</p><p><strong>Ubicación actual:</strong> ${found.current_location || "No indicada"}</p><p><a href="${baseUrl()}/encontrados/${found.public_code}">Ver ficha de encontrado</a></p><p><a href="${baseUrl()}/casos/${missing.public_code}">Ver caso original</a></p>`;
+
+  await notifyCaseOwner(
+    missing.id,
+    `Posible coincidencia encontrada: ${missing.full_name}`,
+    html,
+  );
+  await notifyCaseSubscribers(
+    missing.id,
+    `Posible coincidencia para ${missing.full_name}`,
+    html,
+  );
+}
+
 async function notifyCaseSubscribers(
   personId: string,
   subject: string,
@@ -776,72 +858,98 @@ export async function uploadFoundList(_: unknown, formData: FormData) {
   }
 
   const db = supabaseAdmin();
+  const session = await currentSession();
+  const uploaderEmail = session?.email || (data.uploader_email ? normalizeEmail(data.uploader_email) : null);
   const now = new Date().toISOString();
-  const inserted: string[] = [];
+
+  const { data: batch, error: batchError } = await db
+    .from("upload_batches")
+    .insert({
+      uploaded_by_email: uploaderEmail,
+      uploaded_by_name: data.uploader_name.trim(),
+      uploaded_by_phone: data.uploader_phone.trim(),
+      source_name: data.source_name.trim(),
+      row_count: 0,
+      created_at: now,
+    })
+    .select("id")
+    .single();
+
+  if (batchError || !batch) {
+    return { ok: false, message: "No se pudo crear el lote de carga." };
+  }
+
+  const inserted: FoundRecordForMatch[] = [];
 
   for (const row of rows) {
     const rowDoc = normalizeDocumentId(row.document_id || "");
-    if (rowDoc) {
-      const { data: existing } = await db
-        .from("person_cases")
-        .select("id")
-        .eq("document_id", rowDoc)
-        .neq("status", "duplicate")
-        .maybeSingle();
-      if (existing) continue;
-    }
+    const fullName = row.full_name.trim();
+    const status = fullName ? "partially_identified" : "unidentified";
+    const sensitivityLevel = foundSensitivityLevel(status, fullName || null, null);
     const public_code = crypto.randomUUID().slice(0, 8);
-    const { data: person, error } = await db
-      .from("person_cases")
+    const { data: found, error } = await db
+      .from("found_records")
       .insert({
         public_code,
-        full_name: row.full_name,
-        approximate_age: row.approximate_age ?? null,
+        upload_batch_id: batch.id,
+        created_by_email: uploaderEmail,
+        created_by_name: data.uploader_name.trim(),
+        created_by_phone: data.uploader_phone.trim(),
+        source_name: data.source_name.trim(),
+        full_name: fullName || null,
+        normalized_name: normalizeNameForSearch(fullName),
         document_id: rowDoc || null,
         document_last4: documentLast4(rowDoc),
-        status: "possibly_found",
-        last_seen_location: row.current_location,
+        approximate_age: row.approximate_age ?? null,
+        status,
+        sensitivity_level: sensitivityLevel,
         current_location: row.current_location,
-        description: row.notes,
+        notes_public: row.notes || null,
         created_at: now,
         updated_at: now,
       })
-      .select("id")
+      .select("id, public_code, full_name, current_location, source_name")
       .single();
 
-    if (!error && person) {
-      inserted.push(person.id);
-      await db.from("case_reports").insert({
-        person_id: person.id,
-        report_type: "found",
-        reporter_name: data.uploader_name,
-        reporter_phone: data.uploader_phone,
-        reporter_email: data.uploader_email || null,
-        reporter_relationship: data.source_name,
-        seen_location: row.current_location,
+    if (!error && found) {
+      inserted.push(found as FoundRecordForMatch);
+      await db.from("found_record_reports").insert({
+        found_record_id: found.id,
+        reporter_name: data.uploader_name.trim(),
+        reporter_phone: data.uploader_phone.trim(),
+        reporter_email: uploaderEmail,
+        source_name: data.source_name.trim(),
+        report_type: "found_upload",
+        location: row.current_location,
         notes: row.notes || `Listado cargado por ${data.source_name}`,
         verification_status: "pending",
         visibility: "private",
       });
+      await notifyDocumentMatch(found as FoundRecordForMatch, rowDoc);
     }
   }
+
+  await db
+    .from("upload_batches")
+    .update({ row_count: inserted.length })
+    .eq("id", batch.id);
 
   const admins = adminEmails();
   if (admins.length) {
     await sendEmail({
       to: admins,
       subject: `Nuevo listado de encontrados (${inserted.length})`,
-      html: `<p>${data.uploader_name} cargó ${inserted.length} posibles personas encontradas.</p><p>Fuente: ${data.source_name}</p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+      html: `<p>${data.uploader_name} cargó ${inserted.length} registros de personas encontradas.</p><p>Fuente: ${data.source_name}</p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
     });
   }
 
   revalidatePath("/");
+  revalidatePath("/voluntario");
   return {
     ok: true,
-    message: `Listado recibido: ${inserted.length} persona(s) cargadas como “posiblemente localizada(s)”.`,
+    message: `Listado recibido: ${inserted.length} persona(s) cargadas en encontrados.`,
   };
 }
-
 export async function updateCaseStatus(formData: FormData) {
   if (!(await isAdmin())) throw new Error("No autorizado");
   const id = String(formData.get("id"));
@@ -911,8 +1019,23 @@ export async function markReportReviewed(formData: FormData) {
   revalidatePath("/admin");
 }
 
+const foundStatusSchema = z.enum([
+  "unidentified",
+  "partially_identified",
+  "safe",
+  "hospitalized",
+  "transferred",
+  "minor_unaccompanied",
+  "deceased_unidentified",
+]);
+
 const foundPersonSchema = z.object({
-  full_name: z.string().min(3).max(160),
+  full_name: z.string().max(160).optional(),
+  document_id: z.string().max(40).optional(),
+  current_location: z.string().min(3).max(280),
+  found_location: z.string().max(280).optional(),
+  destination: z.string().max(280).optional(),
+  found_at: z.string().optional(),
   approximate_age: z.coerce
     .number()
     .int()
@@ -920,9 +1043,10 @@ const foundPersonSchema = z.object({
     .max(120)
     .optional()
     .or(z.literal("")),
-  document_id: z.string().max(40).optional(),
-  current_location: z.string().min(3).max(280),
-  notes: z.string().max(1200).optional(),
+  apparent_gender: z.enum(["female", "male", "unknown"]).optional().or(z.literal("")),
+  status: foundStatusSchema,
+  notes_public: z.string().max(1200).optional(),
+  notes_private: z.string().max(2000).optional(),
   reporter_name: z.string().min(3).max(160),
   reporter_phone: z.string().min(6).max(80),
   reporter_email: z.string().email().optional().or(z.literal("")),
@@ -935,25 +1059,16 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
   const parsed = foundPersonSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success)
     return { ok: false, message: "Revisa los campos obligatorios." };
+
   const data = parsed.data;
-  const ageRaw = text(formData, "approximate_age");
-  const ageValue = ageRaw ? Number(ageRaw) : null;
+  const session = await currentSession();
   const db = supabaseAdmin();
   const normalizedDoc = normalizeDocumentId(text(formData, "document_id"));
-  if (normalizedDoc) {
-    const { data: existing } = await db
-      .from("person_cases")
-      .select("public_code, full_name, status")
-      .eq("document_id", normalizedDoc)
-      .neq("status", "duplicate")
-      .maybeSingle();
-    if (existing)
-      return {
-        ok: false,
-        message: `Ya existe un caso con esa cédula: ${existing.full_name}. Revisa /casos/${existing.public_code} antes de crear otro.`,
-      };
-  }
-  const public_code = crypto.randomUUID().slice(0, 8);
+  const fullName = data.full_name?.trim() || null;
+  const reporterEmail = data.reporter_email ? normalizeEmail(data.reporter_email) : null;
+  const createdByEmail = session?.email || reporterEmail;
+  const ageRaw = text(formData, "approximate_age");
+  const ageValue = ageRaw ? Number(ageRaw) : null;
 
   let photoUrl: string | null = null;
   let evidencePath: string | null = null;
@@ -974,35 +1089,122 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
     };
   }
 
-  const { data: person, error } = await db
-    .from("person_cases")
+  const public_code = crypto.randomUUID().slice(0, 8);
+  const sensitivityLevel = foundSensitivityLevel(data.status, fullName, photoUrl);
+  const now = new Date().toISOString();
+
+  const { data: found, error } = await db
+    .from("found_records")
     .insert({
       public_code,
-      full_name: data.full_name.trim(),
+      created_by_email: createdByEmail,
+      created_by_name: data.reporter_name.trim(),
+      created_by_phone: data.reporter_phone.trim(),
+      source_name: data.source_name.trim(),
+      full_name: fullName,
+      normalized_name: normalizeNameForSearch(fullName),
+      document_id: normalizedDoc || null,
+      document_last4: documentLast4(normalizedDoc),
       approximate_age: ageValue,
-      document_id: normalizeDocumentId(text(formData, "document_id")) || null,
-      document_last4: documentLast4(text(formData, "document_id")),
+      apparent_gender: data.apparent_gender || null,
       photo_url: photoUrl,
-      status: "possibly_found",
-      last_seen_location: data.current_location.trim(),
+      evidence_file_path: evidencePath,
+      status: data.status,
+      sensitivity_level: sensitivityLevel,
+      found_location: data.found_location?.trim() || null,
       current_location: data.current_location.trim(),
-      description: data.notes || null,
+      destination: data.destination?.trim() || null,
+      notes_public: data.notes_public?.trim() || null,
+      notes_private: data.notes_private?.trim() || null,
+      found_at: optionalIsoDateTime(data.found_at),
+      created_at: now,
+      updated_at: now,
     })
-    .select("id, public_code, full_name")
+    .select("id, public_code, full_name, current_location, source_name")
     .single();
 
-  if (error || !person)
+  if (error || !found)
     return { ok: false, message: "No se pudo crear el reporte de encontrado." };
 
-  await db.from("case_reports").insert({
-    person_id: person.id,
-    report_type: "found",
+  await db.from("found_record_reports").insert({
+    found_record_id: found.id,
     reporter_name: data.reporter_name.trim(),
     reporter_phone: data.reporter_phone.trim(),
-    reporter_email: data.reporter_email || null,
-    reporter_relationship: data.source_name.trim(),
-    seen_location: data.current_location.trim(),
-    notes: data.notes || null,
+    reporter_email: reporterEmail,
+    source_name: data.source_name.trim(),
+    report_type: "found_upload",
+    location: data.current_location.trim(),
+    notes: data.notes_private?.trim() || data.notes_public?.trim() || null,
+    evidence_file_path: evidencePath,
+    verification_status: "pending",
+    visibility: "private",
+  });
+
+  await notifyDocumentMatch(found as FoundRecordForMatch, normalizedDoc);
+
+  const admins = adminEmails();
+  if (admins.length) {
+    await sendEmail({
+      to: admins,
+      subject: `Nueva persona encontrada: ${fullName || "sin identificar"}`,
+      html: `<p>Se reportó una persona encontrada: <strong>${fullName || "sin identificar"}</strong>.</p><p>Estado: ${data.status}</p><p>Ubicación: ${data.current_location}</p><p><a href="${baseUrl()}/encontrados/${found.public_code}">Ver ficha pública</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+    });
+  }
+
+  revalidatePath("/");
+  revalidatePath("/voluntario");
+  revalidatePath(`/encontrados/${found.public_code}`);
+  redirect(`/encontrados/${found.public_code}`);
+}
+
+const foundRecordReportSchema = z.object({
+  found_record_id: z.string().uuid(),
+  report_type: z.enum(["identity_tip", "correction"]),
+  reporter_name: z.string().min(3).max(160),
+  reporter_phone: z.string().min(6).max(80),
+  reporter_email: z.string().email().optional().or(z.literal("")),
+  notes: z.string().min(8).max(1500),
+});
+
+export async function submitFoundRecordReport(_: unknown, formData: FormData) {
+  if (isSpam(formData))
+    return { ok: false, message: "No se pudo procesar el aviso." };
+  const parsed = foundRecordReportSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success)
+    return { ok: false, message: "Revisa la información enviada." };
+  const data = parsed.data;
+  const db = supabaseAdmin();
+  const { data: found } = await db
+    .from("found_records")
+    .select("id, public_code, full_name")
+    .eq("id", data.found_record_id)
+    .maybeSingle();
+  if (!found) return { ok: false, message: "No se encontró la ficha." };
+
+  let evidencePath: string | null = null;
+  try {
+    evidencePath = await uploadPrivateEvidence(
+      file(formData, "evidence_file"),
+      "found-public-reports",
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "No se pudo subir la evidencia.",
+    };
+  }
+
+  await db.from("found_record_reports").insert({
+    found_record_id: found.id,
+    reporter_name: data.reporter_name.trim(),
+    reporter_phone: data.reporter_phone.trim(),
+    reporter_email: data.reporter_email ? normalizeEmail(data.reporter_email) : null,
+    source_name: "ficha pública",
+    report_type: data.report_type,
+    notes: data.notes.trim(),
     evidence_file_path: evidencePath,
     verification_status: "pending",
     visibility: "private",
@@ -1012,15 +1214,114 @@ export async function createFoundPersonReport(_: unknown, formData: FormData) {
   if (admins.length) {
     await sendEmail({
       to: admins,
-      subject: `Nueva persona posiblemente encontrada: ${person.full_name}`,
-      html: `<p>Se reportó una persona posiblemente encontrada: <strong>${person.full_name}</strong>.</p><p>Ubicación: ${data.current_location}</p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
+      subject: `Nuevo aviso sobre encontrado: ${found.full_name || found.public_code}`,
+      html: `<p>Recibimos un aviso de tipo <strong>${data.report_type}</strong> sobre <strong>${found.full_name || "persona sin identificar"}</strong>.</p><p>${data.notes}</p><p><a href="${baseUrl()}/encontrados/${found.public_code}">Ver ficha</a></p><p><a href="${baseUrl()}/admin">Revisar en admin</a></p>`,
     });
   }
 
-  revalidatePath("/");
-  redirect(`/casos/${person.public_code}?creado=1`);
+  return {
+    ok: true,
+    message: "Gracias. La información fue enviada para revisión privada.",
+  };
 }
 
+const foundSubscriptionRequestSchema = z.object({
+  found_record_id: z.string().uuid(),
+  subscriber_name: z.string().max(160).optional(),
+  email: z.string().email(),
+});
+
+export async function requestFoundRecordSubscription(
+  _: unknown,
+  formData: FormData,
+) {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
+  const parsed = foundSubscriptionRequestSchema.safeParse(
+    Object.fromEntries(formData),
+  );
+  if (!parsed.success)
+    return { ok: false, message: "Indica un correo válido." };
+  const email = normalizeEmail(parsed.data.email);
+  const db = supabaseAdmin();
+  const { data: found } = await db
+    .from("found_records")
+    .select("id, public_code, full_name")
+    .eq("id", parsed.data.found_record_id)
+    .maybeSingle();
+  if (!found) return { ok: false, message: "No se encontró la ficha." };
+
+  const code = newOtpCode();
+  await db.from("generic_subscriptions").upsert(
+    {
+      subject_type: "found_record",
+      subject_id: found.id,
+      email,
+      subscriber_name: parsed.data.subscriber_name || null,
+      code_hash: hashCode(code),
+      status: "pending",
+      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "subject_type,subject_id,email" },
+  );
+  await sendEmail({
+    to: [email],
+    subject: `Confirma tu suscripción: ${found.full_name || found.public_code}`,
+    html: `<p>Para recibir actualizaciones sobre esta ficha de persona encontrada, confirma con este código:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${code}</p><p>Vence en 15 minutos.</p>`,
+  });
+  return {
+    ok: true,
+    message: "Te enviamos un código para confirmar la suscripción.",
+    foundRecordId: found.id,
+    email,
+  };
+}
+
+const foundSubscriptionConfirmSchema = z.object({
+  found_record_id: z.string().uuid(),
+  email: z.string().email(),
+  code: z.string().min(6).max(12),
+});
+
+export async function confirmFoundRecordSubscription(
+  _: unknown,
+  formData: FormData,
+) {
+  if (isSpam(formData)) return { ok: false, message: "No se pudo procesar." };
+  const parsed = foundSubscriptionConfirmSchema.safeParse(
+    Object.fromEntries(formData),
+  );
+  if (!parsed.success) return { ok: false, message: "Revisa el código." };
+  const email = normalizeEmail(parsed.data.email);
+  const db = supabaseAdmin();
+  const { data: sub } = await db
+    .from("generic_subscriptions")
+    .select("id, code_hash, expires_at")
+    .eq("subject_type", "found_record")
+    .eq("subject_id", parsed.data.found_record_id)
+    .eq("email", email)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (
+    !sub ||
+    sub.code_hash !== hashCode(parsed.data.code.replace(/\s+/g, "")) ||
+    new Date(sub.expires_at).getTime() < Date.now()
+  ) {
+    return { ok: false, message: "Código inválido o vencido." };
+  }
+  await db
+    .from("generic_subscriptions")
+    .update({
+      status: "confirmed",
+      confirmed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sub.id);
+  return {
+    ok: true,
+    message: "Suscripción confirmada. Te avisaremos cuando haya actualizaciones.",
+  };
+}
 const otpRequestSchema = z.object({ email: z.string().email() });
 
 export async function requestLoginOtp(_: unknown, formData: FormData) {
