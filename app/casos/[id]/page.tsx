@@ -5,6 +5,7 @@ import { ShareButton } from "@/components/ShareButton";
 import { SubscribeForm } from "@/components/SubscribeForm";
 import { supabaseAdmin, supabaseAnon } from "@/lib/supabase";
 import { PersonCase, statusLabels } from "@/lib/types";
+import { relativeTime } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function CasePage({ params, searchParams }: { params: Promi
             <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Última ubicación</dt><dd>{c.last_seen_location}</dd></div>
             {c.current_location ? <div className="rounded-2xl bg-amber-50 p-3"><dt className="font-bold">Ubicación reportada actual</dt><dd>{c.current_location}</dd></div> : null}
             <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Último contacto</dt><dd>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString("es-VE") : "No indicado"}</dd></div>
-            <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Actualizado</dt><dd>{new Date(c.updated_at).toLocaleString("es-VE")}</dd></div>
+            <div className="rounded-2xl bg-slate-50 p-3"><dt className="font-bold">Actualizado</dt><dd>{new Date(c.updated_at).toLocaleString("es-VE")}<span className="mt-1 block text-xs text-slate-500">{relativeTime(c.updated_at)}</span></dd></div>
           </dl>
           {c.description ? <p className="mt-5 whitespace-pre-wrap rounded-2xl bg-slate-50 p-4 text-slate-700">{c.description}</p> : null}
           <div className="mt-5"><ShareButton title={`Se busca a ${c.full_name}`} text={shareText} url={url} publicCode={c.public_code} /></div>

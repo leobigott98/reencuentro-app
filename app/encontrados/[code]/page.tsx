@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FoundRecordActions } from "@/components/FoundRecordActions";
 import { supabaseAdmin } from "@/lib/supabase";
+import { relativeTime } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -152,15 +153,15 @@ export default async function FoundRecordPage({
           <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
             <div className="rounded-2xl bg-slate-50 p-3">
               <dt className="font-bold">Creado</dt>
-              <dd>{formatDate(record.created_at)}</dd>
+              <dd>{formatDate(record.created_at)}<span className="mt-1 block text-xs text-slate-500">{relativeTime(record.created_at)}</span></dd>
             </div>
             <div className="rounded-2xl bg-slate-50 p-3">
               <dt className="font-bold">Actualizado</dt>
-              <dd>{formatDate(record.updated_at)}</dd>
+              <dd>{formatDate(record.updated_at)}<span className="mt-1 block text-xs text-slate-500">{relativeTime(record.updated_at)}</span></dd>
             </div>
             <div className="rounded-2xl bg-slate-50 p-3">
               <dt className="font-bold">Encontrado</dt>
-              <dd>{formatDate(record.found_at)}</dd>
+              <dd>{formatDate(record.found_at)}<span className="mt-1 block text-xs text-slate-500">{relativeTime(record.found_at)}</span></dd>
             </div>
           </dl>
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
+import { relativeTime } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +79,7 @@ export default async function FoundBatchPage({
           </div>
           <div className="rounded-2xl bg-slate-50 p-3">
             <dt className="font-bold text-slate-500">Fecha</dt>
-            <dd>{shortDate(b.created_at)}</dd>
+            <dd>{shortDate(b.created_at)}<span className="mt-1 block text-xs text-slate-500">{relativeTime(b.created_at)}</span></dd>
           </div>
           <div className="rounded-2xl bg-slate-50 p-3">
             <dt className="font-bold text-slate-500">Filas insertadas</dt>
@@ -121,7 +122,7 @@ export default async function FoundBatchPage({
                     {record.full_name || "Persona no identificada"}
                   </h3>
                 </div>
-                <p className="text-xs font-bold text-slate-500">{shortDate(record.created_at)}</p>
+                <p className="text-xs font-bold text-slate-500">{relativeTime(record.created_at)}</p>
               </div>
               <p className="mt-2 text-sm text-slate-600">
                 {record.current_location || "Ubicación no indicada"}
